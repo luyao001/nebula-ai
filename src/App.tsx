@@ -1,26 +1,41 @@
 import { useState, useRef, useEffect } from "react";
 import Editor from "@monaco-editor/react";
-import { Send, Code, Eye, Cpu, Sparkles, MessageSquare, PanelLeftClose, Copy, Check } from 'lucide-react';
+import { Send, Code, Eye, Cpu, Sparkles, MessageSquare, PanelLeftClose, Copy, Check, Cloud, KeyRound } from 'lucide-react';
 import "./App.css";
 
 const OLLAMA_API_URL = "http://localhost:11434/api/chat";
-const OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"; // 🚀 新增：获取本地模型列表的接口
+const OLLAMA_TAGS_URL = "http://localhost:11434/api/tags";
+const ORCAROUTER_API_URL = "https://api.orcarouter.ai/v1/chat/completions";
+const ORCAROUTER_DEFAULT_MODELS = [
+  "orcarouter/auto",
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
+  "qwen/qianwen-3.8",
+];
+
+type Provider = "ollama" | "orcarouter";
+type ChatMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
 
 export default function App() {
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState([{ 
+  const [messages, setMessages] = useState<ChatMessage[]>([{ 
     role: "assistant", 
-    content: "星云锻造炉已就绪。\n\n已开启本地模型自动探测探测。请确保 Ollama 已启动，并在下拉菜单中选择你的模型。" 
+    content: "星云锻造炉已就绪。\n\n你可以使用本地 Ollama，也可以切换到 OrcaRouter 调用云端模型。" 
   }]);
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"code" | "preview">("code");
   const [generatedCode, setGeneratedCode] = useState("");
   const [currentLanguage, setCurrentLanguage] = useState("html");
   
-  // 🚀 动态模型状态
+  const [provider, setProvider] = useState<Provider>("ollama");
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState("");
   const [isOllamaRunning, setIsOllamaRunning] = useState(true);
+  const [orcaRouterApiKey, setOrcaRouterApiKey] = useState(() => localStorage.getItem("orcarouter_api_key") || "");
+  const [orcaRouterModel, setOrcaRouterModel] = useState(() => localStorage.getItem("orcarouter_model") || ORCAROUTER_DEFAULT_MODELS[0]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isCopied, setIsCopied] = useState(false);
@@ -28,7 +43,6 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBuffer = useRef("");
 
-  // 🚀 核心新增：软件启动时，自动扫描本地 Ollama 模型
   useEffect(() => {
     const fetchLocalModels = async () => {
       try {
@@ -51,14 +65,20 @@ export default function App() {
     };
 
     fetchLocalModels();
-  }, []); // 仅在启动时运行一次
+  }, []);
 
-  // 自动滚动到底部
+  useEffect(() => {
+    localStorage.setItem("orcarouter_api_key", orcaRouterApiKey);
+  }, [orcaRouterApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem("orcarouter_model", orcaRouterModel);
+  }, [orcaRouterModel]);
+
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  // 实时同步逻辑
   const extractCodeStreaming = (text: string) => {
     const regex = /```(\w*)\n?([\s\S]*?)(?:```|$)/;
     const match = text.match(regex);
@@ -75,60 +95,118 @@ export default function App() {
     setTimeout(() => setIsCopied(false), 2000); 
   };
 
+  const getSelectedModel = () => provider === "ollama" ? currentModel : orcaRouterModel.trim();
+  const canSend = Boolean(prompt.trim() && !isLoading && getSelectedModel() && (provider === "ollama" || orcaRouterApiKey.trim()));
+
+  const syncAssistantMessage = (content: string) => {
+    setMessages(prev => {
+      const newMsgs = [...prev];
+      newMsgs[newMsgs.length - 1].content = content;
+      return newMsgs;
+    });
+
+    const result = extractCodeStreaming(content);
+    if (result) {
+      setGeneratedCode(result.code);
+      const lang = result.lang.toLowerCase();
+      if (lang.includes('py') && currentLanguage !== 'python') setCurrentLanguage('python');
+      else if ((lang.includes('html') || lang === '') && currentLanguage !== 'html') setCurrentLanguage('html');
+      else if (lang.includes('js') && currentLanguage !== 'javascript') setCurrentLanguage('javascript');
+    }
+  };
+
+  const readOllamaStream = async (response: Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Ollama stream unavailable");
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = new TextDecoder().decode(value);
+      const lines = chunk.split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const json = JSON.parse(line);
+        if (json.message?.content) {
+          streamBuffer.current += json.message.content;
+          syncAssistantMessage(streamBuffer.current);
+        }
+      }
+    }
+  };
+
+  const readOpenAICompatibleStream = async (response: Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("OrcaRouter stream unavailable");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const event of events) {
+        const dataLines = event
+          .split("\n")
+          .filter(line => line.startsWith("data:"))
+          .map(line => line.replace(/^data:\s*/, ""));
+
+        for (const data of dataLines) {
+          if (data === "[DONE]") return;
+          const json = JSON.parse(data);
+          const content = json.choices?.[0]?.delta?.content;
+          if (content) {
+            streamBuffer.current += content;
+            syncAssistantMessage(streamBuffer.current);
+          }
+        }
+      }
+    }
+  };
+
   const handleSend = async () => {
-    // 如果没有输入、正在加载，或者【没有检测到模型】，则拒绝发送
-    if (!prompt.trim() || isLoading || !currentModel) return;
+    if (!canSend) return;
     
-    const userMsg = { role: "user", content: prompt };
+    const userMsg: ChatMessage = { role: "user", content: prompt };
     setMessages(prev => [...prev, userMsg, { role: "assistant", content: "" }]);
     setPrompt("");
     setIsLoading(true);
     streamBuffer.current = ""; 
 
     try {
-      const response = await fetch(OLLAMA_API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: currentModel, messages: [...messages.filter(m => m.content), userMsg], stream: true })
-      });
+      const requestMessages = [...messages.filter(m => m.content), userMsg];
 
-      const reader = response.body?.getReader();
-      if (!reader) return;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = new TextDecoder().decode(value);
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const json = JSON.parse(line);
-            if (json.message?.content) {
-              streamBuffer.current += json.message.content;
-              
-              setMessages(prev => {
-                const newMsgs = [...prev];
-                newMsgs[newMsgs.length - 1].content = streamBuffer.current;
-                return newMsgs;
-              });
-
-              const result = extractCodeStreaming(streamBuffer.current);
-              if (result) {
-                setGeneratedCode(result.code);
-                const lang = result.lang.toLowerCase();
-                if (lang.includes('py') && currentLanguage !== 'python') setCurrentLanguage('python');
-                else if ((lang.includes('html') || lang === '') && currentLanguage !== 'html') setCurrentLanguage('html');
-                else if (lang.includes('js') && currentLanguage !== 'javascript') setCurrentLanguage('javascript');
-              }
-            }
-          } catch (e) { }
-        }
+      if (provider === "ollama") {
+        const response = await fetch(OLLAMA_API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: currentModel, messages: requestMessages, stream: true })
+        });
+        if (!response.ok) throw new Error("Ollama request failed");
+        await readOllamaStream(response);
+      } else {
+        const response = await fetch(ORCAROUTER_API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${orcaRouterApiKey.trim()}`,
+            "HTTP-Referer": "https://github.com/luyao001/nebula-forge",
+            "X-Title": "Nebula Forge"
+          },
+          body: JSON.stringify({ model: orcaRouterModel.trim(), messages: requestMessages, stream: true })
+        });
+        if (!response.ok) throw new Error("OrcaRouter request failed");
+        await readOpenAICompatibleStream(response);
       }
     } catch (error) { 
         setMessages(prev => {
           const newMsgs = [...prev];
-          newMsgs[newMsgs.length - 1].content = "⚠️ 连接 Ollama 失败，请检查模型服务是否启动。";
+          newMsgs[newMsgs.length - 1].content = provider === "ollama"
+            ? "⚠️ 连接 Ollama 失败，请检查模型服务是否启动。"
+            : "⚠️ 连接 OrcaRouter 失败，请检查 API Key、模型名称或网络连接。";
           return newMsgs;
         });
     } finally { 
@@ -174,27 +252,53 @@ export default function App() {
             <div className="nf-history-item active">index.workspace</div>
             <div className="nf-sidebar-spacer"></div>
             
-            {/* 🚀 动态模型下拉菜单 */}
             <div className="nf-model-box">
-              <div className="nf-model-label"><Cpu size={12} /> ENGINE</div>
-              <select 
-                value={currentModel} 
-                onChange={(e) => setCurrentModel(e.target.value)}
-                disabled={!isOllamaRunning || availableModels.length === 0}
-                style={{
-                  background: 'rgba(0,0,0,0.5)', border: '1px solid #27272a', 
-                  color: !isOllamaRunning ? '#ef4444' : '#fafafa', 
-                  padding: '8px', borderRadius: '6px', width: '100%', outline: 'none'
-                }}
+              <div className="nf-model-label"><Cloud size={12} /> PROVIDER</div>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as Provider)}
+                className="nf-select"
               >
-                {!isOllamaRunning ? (
-                  <option value="">⚠️ 未连接 Ollama</option>
+                <option value="ollama">Ollama 本地</option>
+                <option value="orcarouter">OrcaRouter 云端</option>
+              </select>
+
+              <div className="nf-model-label"><Cpu size={12} /> MODEL</div>
+              <select 
+                value={provider === "ollama" ? currentModel : orcaRouterModel} 
+                onChange={(e) => provider === "ollama" ? setCurrentModel(e.target.value) : setOrcaRouterModel(e.target.value)}
+                disabled={provider === "ollama" && (!isOllamaRunning || availableModels.length === 0)}
+                className={`nf-select ${provider === "ollama" && !isOllamaRunning ? "error" : ""}`}
+              >
+                {provider === "ollama" ? !isOllamaRunning ? (
+                  <option value="">未连接 Ollama</option>
                 ) : availableModels.length === 0 ? (
-                  <option value="">📥 请先拉取模型</option>
+                  <option value="">请先拉取模型</option>
                 ) : (
                   availableModels.map(m => <option key={m} value={m}>{m}</option>)
+                ) : (
+                  ORCAROUTER_DEFAULT_MODELS.map(m => <option key={m} value={m}>{m}</option>)
                 )}
               </select>
+
+              {provider === "orcarouter" && (
+                <>
+                  <div className="nf-model-label"><KeyRound size={12} /> API KEY</div>
+                  <input
+                    className="nf-provider-input"
+                    type="password"
+                    value={orcaRouterApiKey}
+                    onChange={(e) => setOrcaRouterApiKey(e.target.value)}
+                    placeholder="输入 OrcaRouter API Key"
+                  />
+                  <input
+                    className="nf-provider-input"
+                    value={orcaRouterModel}
+                    onChange={(e) => setOrcaRouterModel(e.target.value)}
+                    placeholder="自定义模型 ID"
+                  />
+                </>
+              )}
             </div>
 
           </div>
@@ -216,10 +320,10 @@ export default function App() {
                     value={prompt} 
                     onChange={e => setPrompt(e.target.value)} 
                     onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()} 
-                    placeholder={!currentModel ? "请先在左侧选择模型..." : "在此输入你的构想..."} 
-                    disabled={!currentModel}
+                    placeholder={!getSelectedModel() ? "请先在左侧选择模型..." : provider === "orcarouter" && !orcaRouterApiKey.trim() ? "请先填写 OrcaRouter API Key..." : "在此输入你的构想..."} 
+                    disabled={!getSelectedModel() || (provider === "orcarouter" && !orcaRouterApiKey.trim())}
                   />
-                  <button className="nf-send-btn" onClick={handleSend} disabled={isLoading || !currentModel}>
+                  <button className="nf-send-btn" onClick={handleSend} disabled={!canSend}>
                     <Send size={18} />
                   </button>
                 </div>

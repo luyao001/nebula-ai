@@ -1,11 +1,12 @@
 # 🌌 Nebula Forge (星云锻造炉)
 
-**Nebula Forge** 是一款基于 **Tauri + React** 构建的本地 AI 网页构建器。它完全基于 **Ollama** 驱动，为你提供隐私、安全、零成本的流式代码生成与实时渲染体验。
+**Nebula Forge** 是一款基于 **Tauri + React** 构建的 AI 网页构建器。它默认支持 **Ollama** 本地模型，也可以切换到 **OrcaRouter** 作为可选云端 Provider，提供流式代码生成与实时渲染体验。
 
 ### ✨ 核心特性
 
-- 🧠 **纯本地智能内核**：深度集成 Ollama，数据完全本地化运行，无需联网，隐私绝对安全。
+- 🧠 **双 Provider 支持**：默认深度集成 Ollama，也可选择 OrcaRouter 调用云端大模型 API。
 - 📡 **动态模型探测**：启动时自动扫描本地 Ollama 环境，智能列出已拉取的模型，断连自动提示防错。
+- ☁️ **OrcaRouter 接入**：在侧边栏切换 Provider，填写 API Key 与模型 ID 后即可使用 OpenAI 兼容接口。
 - ⚡ **流式代码跳字**：搭载优化的流式解析器，AI 输出的同时，代码在右侧**实时同步渲染**。
 - 🌈 **智能代码高亮**：支持动态语言嗅探，无论生成 HTML 还是 Python，都能精准识别并实时高亮。
 - 👁️ **即时沙盒预览**：内置安全沙盒环境，生成的代码一键切换为可视化交互网页。
@@ -27,6 +28,13 @@
    - 打开 Windows 终端 (cmd)，执行命令：`setx OLLAMA_ORIGINS "*"`
    - 执行完毕后，请在电脑右下角托盘**彻底退出 Ollama**，然后再重新打开 Ollama。
 4. 打开 Nebula Forge，左侧下拉菜单会自动刷出你的模型，开始你的锻造之旅！
+
+#### 使用 OrcaRouter
+
+1. 在左侧 `PROVIDER` 中选择 `OrcaRouter 云端`。
+2. 在 `API KEY` 中填写你的 OrcaRouter API Key。
+3. 从下拉菜单选择预置模型，或在自定义模型输入框中填写 OrcaRouter 支持的模型 ID。
+4. 输入需求后发送，Nebula Forge 会通过 `https://api.orcarouter.ai/v1/chat/completions` 流式生成代码。
 
 ---
 

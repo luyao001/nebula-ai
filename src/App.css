@@ -72,6 +72,24 @@ body { margin: 0; background: var(--bg-dark); color: var(--text); font-family: '
 
 .nf-sidebar-inner { width: 260px; height: 100%; padding: 20px; display: flex; flex-direction: column; box-sizing: border-box; }
 
+.nf-model-box { display: flex; flex-direction: column; gap: 8px; }
+
+.nf-model-label { color: #a1a1aa; display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0; margin-top: 8px; }
+
+.nf-select, .nf-provider-input {
+
+  background: rgba(0,0,0,0.5); border: 1px solid #27272a; color: #fafafa;
+
+  padding: 8px; border-radius: 6px; width: 100%; outline: none; box-sizing: border-box;
+
+}
+
+.nf-select.error { color: #ef4444; }
+
+.nf-provider-input::placeholder { color: #71717a; }
+
+.nf-provider-input:focus, .nf-select:focus { border-color: var(--accent); }
+
 
 
 .nf-workspace { flex: 1; display: flex; min-width: 0; }
