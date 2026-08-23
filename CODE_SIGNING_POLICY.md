@@ -6,6 +6,11 @@ repository. Release artifacts submitted for signing must come from a tagged
 commit owned by this repository and must use the same product name and version
 as the tag.
 
+Windows artifacts are built on GitHub-hosted Windows runners by
+`.github/workflows/build-windows.yml`. After SignPath approval, that workflow
+will submit its uploaded unsigned artifact to the SignPath GitHub connector for
+origin verification, manual approval, and signing.
+
 Free code signing provided by [SignPath.io](https://about.signpath.io/),
 certificate by [SignPath Foundation](https://signpath.org/).
 
