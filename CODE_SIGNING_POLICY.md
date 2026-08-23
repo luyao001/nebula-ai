@@ -7,9 +7,10 @@ commit owned by this repository and must use the same product name and version
 as the tag.
 
 Windows artifacts are built on GitHub-hosted Windows runners by
-`.github/workflows/build-windows.yml`. After SignPath approval, that workflow
-will submit its uploaded unsigned artifact to the SignPath GitHub connector for
-origin verification, manual approval, and signing.
+`.github/workflows/build-windows.yml`. Tagged builds submit their uploaded
+unsigned artifact to the SignPath GitHub connector for origin verification,
+manual approval, and signing. Publication fails closed: no GitHub Release is
+created unless Windows validates the returned Authenticode signature.
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/),
 certificate by [SignPath Foundation](https://signpath.org/).
@@ -34,6 +35,15 @@ the signing approver.
 - Signed artifacts must not be modified after signing.
 - The SHA-256 digest of each released installer is published in its GitHub
   Release notes.
+
+## Repository configuration
+
+The SignPath API token is stored only as the GitHub Actions secret
+`SIGNPATH_API_TOKEN`. The non-secret organization, project, and signing-policy
+identifiers are stored as repository variables named
+`SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`, and
+`SIGNPATH_SIGNING_POLICY_SLUG`. These values are configured after SignPath
+approves the project and are never embedded in release binaries.
 
 ## Privacy
 
