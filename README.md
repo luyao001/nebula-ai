@@ -13,7 +13,7 @@ Nebula AI 是一款基于 Tauri + React 构建的本地优先 AI 工作台。它
 
 ## 下载与使用
 
-从 [Releases](https://github.com/luyao001/nebula-forge/releases) 下载最新 Windows 安装包。
+从 [Releases](https://github.com/luyao001/nebula-ai/releases) 下载最新 Windows 安装包。
 
 ### 使用 Ollama
 

@@ -426,7 +426,7 @@ export default function App() {
           headers: {
             "Content-Type": "application/json",
             Authorization: "Bearer " + orcaRouterApiKey.trim(),
-            "HTTP-Referer": "https://github.com/luyao001/nebula-forge",
+            "HTTP-Referer": "https://github.com/luyao001/nebula-ai",
             "X-Title": "Nebula AI",
           },
           body: JSON.stringify({
