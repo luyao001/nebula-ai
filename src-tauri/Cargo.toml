@@ -3,6 +3,7 @@ name = "nebula-ai"
 version = "0.2.0"
 description = "A local-first, multi-mode AI workspace"
 authors = ["luyao001"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

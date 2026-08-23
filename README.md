@@ -75,3 +75,19 @@ pnpm tauri build
 ## 隐私说明
 
 Ollama 模式直接访问本机服务。OrcaRouter 模式会把当前对话发送到所选云端模型；API Key 是否持久化由“在此设备记住密钥”控制。导出的文件只写入用户在保存对话框中选择的位置。
+
+完整说明参见 [隐私政策](PRIVACY.md)。
+
+## 卸载
+
+在 Windows 中打开 **设置 → 应用 → 已安装的应用 → Nebula AI → 卸载**。
+
+## Code signing policy
+
+Nebula AI 正在申请 SignPath Foundation 的开源代码签名服务。完整的构建来源、审批角色和发布要求参见 [Code signing policy](CODE_SIGNING_POLICY.md)。
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
