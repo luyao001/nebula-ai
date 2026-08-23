@@ -1,53 +1,77 @@
-# 🌌 Nebula Forge (星云锻造炉)
+# Nebula AI
 
-**Nebula Forge** 是一款基于 **Tauri + React** 构建的 AI 网页构建器。它默认支持 **Ollama** 本地模型，也可以切换到 **OrcaRouter** 作为可选云端 Provider，提供流式代码生成与实时渲染体验。
+Nebula AI 是一款基于 Tauri + React 构建的本地优先 AI 工作台。它支持 Ollama 本地模型与 OrcaRouter 云端模型，把对话、可编辑成果、网页预览和文件导出放在同一个桌面应用里。
 
-### ✨ 核心特性
+## 功能
 
-- 🧠 **双 Provider 支持**：默认深度集成 Ollama，也可选择 OrcaRouter 调用云端大模型 API。
-- 📡 **动态模型探测**：启动时自动扫描本地 Ollama 环境，智能列出已拉取的模型，断连自动提示防错。
-- ☁️ **OrcaRouter 接入**：在侧边栏切换 Provider，填写 API Key 与模型 ID 后即可使用 OpenAI 兼容接口。
-- ⚡ **流式代码跳字**：搭载优化的流式解析器，AI 输出的同时，代码在右侧**实时同步渲染**。
-- 🌈 **智能代码高亮**：支持动态语言嗅探，无论生成 HTML 还是 Python，都能精准识别并实时高亮。
-- 👁️ **即时沙盒预览**：内置安全沙盒环境，生成的代码一键切换为可视化交互网页。
-- 📋 **一键纯净提取**：带有成功状态反馈的“一键复制”功能，生成的代码随用随取。
-- 🎛️ **极简专注布局**：沉浸式工作台，底部固定输入区与自适应折叠侧边栏。
+- **四种工作模式**：网页构建、代码助手、内容创作、通用问答。
+- **双 Provider**：自动探测 Ollama 本地模型，也可使用 OrcaRouter 兼容接口。
+- **可靠流式输出**：正确处理跨网络分片的 NDJSON / SSE 数据，可随时停止生成。
+- **成果工作区**：模型输出可以继续编辑、复制，并导出为 HTML、代码、Markdown 或文本文件。
+- **安全网页预览**：生成的 HTML 在隔离 iframe 中运行，不继承应用权限。
+- **桌面友好**：模型状态刷新、API Key 显示控制、响应式布局与键盘操作。
 
----
+## 下载与使用
 
-### 📦 下载与使用 (小白必看)
+从 [Releases](https://github.com/luyao001/nebula-forge/releases) 下载最新 Windows 安装包。
 
-如果你只想使用本软件，无需配置代码环境，请按以下步骤操作：
+### 使用 Ollama
 
-1. **下载软件**：前往右侧的 **[Releases 页面](https://github.com/luyao001/nebula-forge/releases)** 下载最新的安装包并安装。
-2. **安装 AI 大脑 (Ollama)**：
-   - 前往 [Ollama 官网](https://ollama.com/) 下载并安装。
-   - 打开系统终端 (cmd)，运行 `ollama pull qwen2.5-coder:7b` (或你喜欢的其他模型) 进行下载。
-3. **开启跨域权限 (🚨非常重要)**：
-   - 因为本软件属于第三方桌面应用，出于安全限制，必须授权跨域。
-   - 打开 Windows 终端 (cmd)，执行命令：`setx OLLAMA_ORIGINS "*"`
-   - 执行完毕后，请在电脑右下角托盘**彻底退出 Ollama**，然后再重新打开 Ollama。
-4. 打开 Nebula Forge，左侧下拉菜单会自动刷出你的模型，开始你的锻造之旅！
+1. 从 [Ollama 官网](https://ollama.com/) 安装 Ollama。
+2. 拉取一个模型，例如：
 
-#### 使用 OrcaRouter
+~~~bash
+ollama pull qwen2.5-coder:7b
+~~~
 
-1. 在左侧 `PROVIDER` 中选择 `OrcaRouter 云端`。
-2. 在 `API KEY` 中填写你的 OrcaRouter API Key。
-3. 从下拉菜单选择预置模型，或在自定义模型输入框中填写 OrcaRouter 支持的模型 ID。
-4. 输入需求后发送，Nebula Forge 会通过 `https://api.orcarouter.ai/v1/chat/completions` 流式生成代码。
+3. Windows 用户首次使用时执行：
 
----
+~~~powershell
+setx OLLAMA_ORIGINS "*"
+~~~
 
-### 🛠️ 开发者指南
+4. 完全退出并重新启动 Ollama，然后打开 Nebula AI。若模型没有出现，点击左侧刷新按钮。
 
-如果你想克隆代码进行二次开发：
+### 使用 OrcaRouter
 
-```bash
-# 1. 安装项目依赖
+1. 在左侧 Provider 中选择 OrcaRouter。
+2. 输入 API Key，并选择或填写模型 ID。
+3. “在此设备记住密钥”默认关闭；开启后密钥会保存在当前设备的本地存储中。
+
+## 工作模式
+
+| 模式 | 适合任务 | 默认成果 |
+| --- | --- | --- |
+| 网页构建 | 单页网站、组件原型、交互页面 | HTML + 沙盒预览 |
+| 代码助手 | 编写脚本、修复错误、重构与解释代码 | 自动识别语言的代码 |
+| 内容创作 | 文章、方案、邮件、提纲 | Markdown 文稿 |
+| 通用问答 | 分析、总结、规划和开放式问题 | Markdown 回答 |
+
+## 本地开发
+
+需要 Node.js、pnpm、Rust 和 Tauri 2 的系统依赖。
+
+~~~bash
 pnpm install
-
-# 2. 启动本地开发环境
+pnpm check
 pnpm tauri dev
+~~~
 
-# 3. 打包生成可执行文件
+构建桌面安装包：
+
+~~~bash
 pnpm tauri build
+~~~
+
+## 技术栈
+
+- Tauri 2
+- React 19 + TypeScript
+- Vite 7
+- Monaco Editor
+- Ollama NDJSON API
+- OrcaRouter OpenAI-compatible SSE API
+
+## 隐私说明
+
+Ollama 模式直接访问本机服务。OrcaRouter 模式会把当前对话发送到所选云端模型；API Key 是否持久化由“在此设备记住密钥”控制。导出的文件只写入用户在保存对话框中选择的位置。

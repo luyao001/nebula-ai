@@ -20,12 +20,12 @@ importers:
       '@tauri-apps/plugin-fs':
         specifier: ^2.4.5
         version: 2.4.5
-      '@tauri-apps/plugin-opener':
-        specifier: ^2
-        version: 2.5.3
       lucide-react:
         specifier: ^0.575.0
         version: 0.575.0(react@19.2.4)
+      monaco-editor:
+        specifier: ^0.55.1
+        version: 0.55.1
       react:
         specifier: ^19.1.0
         version: 19.2.4

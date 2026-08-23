@@ -1,11 +1,13 @@
 {
-  "name": "open-builder",
+  "name": "nebula-ai",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
+  "packageManager": "pnpm@11.19.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "check": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -14,8 +16,8 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
-    "@tauri-apps/plugin-opener": "^2",
     "lucide-react": "^0.575.0",
+    "monaco-editor": "^0.55.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-resizable-panels": "^4.6.5"
