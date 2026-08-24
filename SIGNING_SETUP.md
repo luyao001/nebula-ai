@@ -1,8 +1,13 @@
 # Trusted release setup
 
 The repository is prepared to publish Nebula AI `v0.2.1` through SignPath. A
-version tag does not publish an unsigned fallback: the workflow stops if any
-approval, credential, signature, or verification step fails.
+stable version tag does not publish an unsigned fallback: the workflow stops if
+any approval, credential, signature, or verification step fails.
+
+Explicit testing tags in the form `vX.Y.Z-test.N` are the only exception. They
+publish an unsigned GitHub pre-release whose filename and notes clearly warn
+that Windows SmartScreen may block it. They do not replace the signed stable
+release.
 
 After SignPath approves the open-source application:
 

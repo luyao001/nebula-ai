@@ -12,6 +12,11 @@ unsigned artifact to the SignPath GitHub connector for origin verification,
 manual approval, and signing. Publication fails closed: no GitHub Release is
 created unless Windows validates the returned Authenticode signature.
 
+Tags in the form `vX.Y.Z-test.N` may publish clearly labeled unsigned
+pre-releases for direct testing. Their installer filename and release notes
+contain an `UNSIGNED` warning, and they are never marked as the latest stable
+release.
+
 Free code signing provided by [SignPath.io](https://about.signpath.io/),
 certificate by [SignPath Foundation](https://signpath.org/).
 
@@ -35,6 +40,8 @@ the signing approver.
 - Signed artifacts must not be modified after signing.
 - The SHA-256 digest of each released installer is published in its GitHub
   Release notes.
+- Unsigned testing tags use `vX.Y.Z-test.N` and must not be represented as
+  trusted production releases.
 
 ## Repository configuration
 
