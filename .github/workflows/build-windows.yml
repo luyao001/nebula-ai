@@ -191,10 +191,10 @@ jobs:
           SmartScreen may display an unknown-publisher warning. Do not redistribute
           this installer as a trusted production release.
 
-          - Build source: GitHub Actions from tag `${{ github.ref_name }}`
+          - Build source: GitHub Actions from tag ${{ github.ref_name }}
           - SHA-256: ``$sha256``
 
-          The stable `v0.2.1` release remains blocked until SignPath returns a valid
+          The stable v0.2.1 release remains blocked until SignPath returns a valid
           Authenticode signature.
           "@ | Set-Content -Path unsigned-release-notes.md -Encoding utf8
 
