@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Braces,
   Check,
@@ -10,6 +9,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  FolderOpen,
   KeyRound,
   LoaderCircle,
   MessageSquare,
@@ -20,11 +20,33 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Workflow,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import "./lib/monaco";
-import { getResponseError, readNdjsonStream, readSseStream } from "./lib/streaming";
+import { createOllamaProvider, createOpenAiCompatibleProvider } from "./providers";
+import type { ProviderMessage } from "./providers";
+import { runAgentTask } from "./agent/runner";
+import type { AgentPlanStep, AgentState, AgentTimelineItem, AgentUsage } from "./agent/types";
+import { AgentTimeline } from "./components/AgentTimeline";
+import { PermissionDialog } from "./components/PermissionDialog";
+import { TaskHistory } from "./components/TaskHistory";
+import {
+  listTaskSnapshots,
+  loadTaskSnapshot,
+  saveTaskSnapshot,
+} from "./agent/task-store";
+import type { TaskSummary } from "./agent/task-store";
+import { auditHtmlInPreview } from "./tools/preview";
+import {
+  getWorkspaceStatus,
+  selectWorkspaceRoot,
+} from "./tools/gateway";
+import type {
+  PermissionDecision,
+  PreparedToolCall,
+  WorkspaceInfo,
+} from "./tools/gateway";
 import "./App.css";
 
 const OLLAMA_API_URL = "http://localhost:11434/api/chat";
@@ -37,8 +59,16 @@ const ORCAROUTER_DEFAULT_MODELS = [
   "qwen/qianwen-3.8",
 ];
 
+const ollamaProvider = createOllamaProvider(OLLAMA_API_URL);
+const orcaRouterProvider = createOpenAiCompatibleProvider({
+  chatUrl: ORCAROUTER_API_URL,
+  referer: "https://github.com/luyao001/nebula-ai",
+  title: "Nova",
+});
+
 type Provider = "ollama" | "orcarouter";
 type WorkspaceMode = "web" | "code" | "writing" | "assistant";
+type ExecutionMode = "generate" | "agent";
 type GenerationStatus = "idle" | "generating" | "done" | "stopped" | "error";
 type OllamaStatus = "checking" | "online" | "offline";
 
@@ -49,6 +79,17 @@ type ChatMessage = {
 
 type OllamaModel = {
   name?: unknown;
+};
+
+type PendingPermission = {
+  request: PreparedToolCall;
+  resolve: (decision: PermissionDecision) => void;
+};
+
+type CurrentTaskMeta = {
+  taskId: string;
+  title: string;
+  createdAt: number;
 };
 
 const MODE_CONFIG: Record<
@@ -67,49 +108,49 @@ const MODE_CONFIG: Record<
   web: {
     label: "网页构建",
     systemPrompt:
-      "你是 Nebula AI 的网页工程助手。生成完整、可直接运行的单文件 HTML，" +
+      "你是 Nova 的网页工程助手。生成完整、可直接运行的单文件 HTML，" +
       "代码必须放在一个 html Markdown 代码块中。确保页面响应式、具有基本无障碍支持，解释保持简短。",
     welcome: "网页工作区已就绪。\n\n描述页面、视觉风格和关键交互，我会生成可编辑、可即时预览的完整 HTML。",
     placeholder: "描述页面、风格和关键交互...",
     outputLabel: "网页画布",
     language: "html",
-    fileName: "nebula-page.html",
+    fileName: "nova-page.html",
     extension: "html",
   },
   code: {
     label: "代码助手",
     systemPrompt:
-      "你是 Nebula AI 的资深软件工程助手。根据需求生成、解释、重构或修复代码。" +
+      "你是 Nova 的资深软件工程助手。根据需求生成、解释、重构或修复代码。" +
       "把主要成果放在一个带准确语言标记的 Markdown 代码块中，说明保持简洁，并指出必要的运行方式。",
     welcome: "代码工作区已就绪。\n\n可以让我编写脚本、修复错误、重构代码，或解释一段实现思路。",
     placeholder: "描述要编写、修复或重构的代码...",
     outputLabel: "代码成果",
     language: "plaintext",
-    fileName: "nebula-output.txt",
+    fileName: "nova-output.txt",
     extension: "txt",
   },
   writing: {
     label: "内容创作",
     systemPrompt:
-      "你是 Nebula AI 的中文写作伙伴。根据目标读者、语气和用途输出结构清晰的 Markdown 文稿。" +
+      "你是 Nova 的中文写作伙伴。根据目标读者、语气和用途输出结构清晰的 Markdown 文稿。" +
       "保留事实边界，不编造来源；需要信息时明确标注待核实项。",
     welcome: "写作工作区已就绪。\n\n告诉我文稿类型、读者和语气，我会产出可继续编辑和导出的 Markdown 内容。",
     placeholder: "描述文稿类型、读者、语气和要点...",
     outputLabel: "文稿",
     language: "markdown",
-    fileName: "nebula-draft.md",
+    fileName: "nova-draft.md",
     extension: "md",
   },
   assistant: {
     label: "通用问答",
     systemPrompt:
-      "你是 Nebula AI 的通用助理。直接、准确地回答问题；复杂任务使用清晰结构，" +
+      "你是 Nova 的通用助理。直接、准确地回答问题；复杂任务使用清晰结构，" +
       "不确定的信息要明确说明，不能假装完成外部操作。",
     welcome: "通用工作区已就绪。\n\n可以用它梳理问题、制定方案、总结信息或进行开放式问答。",
     placeholder: "输入问题或需要梳理的任务...",
     outputLabel: "回答",
     language: "markdown",
-    fileName: "nebula-answer.md",
+    fileName: "nova-answer.md",
     extension: "md",
   },
 };
@@ -158,8 +199,15 @@ const extractCode = (text: string) => {
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === "AbortError";
 
+// Monaco is heavy; load it (and its worker wiring) in an async chunk so the
+// app shell paints without waiting for the editor bundle.
+const CodeEditor = lazy(async () => {
+  await import("./lib/monaco");
+  const { default: MonacoEditor } = await import("@monaco-editor/react");
+  return { default: MonacoEditor };
+});
+
 export default function App() {
-  const savedApiKey = localStorage.getItem("orcarouter_api_key") || "";
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(() => {
     const savedMode = localStorage.getItem("nebula_workspace_mode");
     return savedMode && savedMode in MODE_CONFIG ? (savedMode as WorkspaceMode) : "web";
@@ -182,19 +230,33 @@ export default function App() {
     () => localStorage.getItem("ollama_model") || "",
   );
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus>("checking");
-  const [orcaRouterApiKey, setOrcaRouterApiKey] = useState(savedApiKey);
-  const [rememberApiKey, setRememberApiKey] = useState(Boolean(savedApiKey));
+  const [orcaRouterApiKey, setOrcaRouterApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [orcaRouterModel, setOrcaRouterModel] = useState(
     () => localStorage.getItem("orcarouter_model") || ORCAROUTER_DEFAULT_MODELS[0],
   );
+  const selectedModel = provider === "ollama" ? currentModel : orcaRouterModel.trim();
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => window.innerWidth >= 900);
   const [isCopied, setIsCopied] = useState(false);
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>(() =>
+    localStorage.getItem("nebula_execution_mode") === "agent" ? "agent" : "generate",
+  );
+  const [workspaceInfo, setWorkspaceInfo] = useState<WorkspaceInfo | null>(null);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [agentState, setAgentState] = useState<AgentState>("idle");
+  const [agentPlan, setAgentPlan] = useState<AgentPlanStep[]>([]);
+  const [agentTimeline, setAgentTimeline] = useState<AgentTimelineItem[]>([]);
+  const [pendingPermission, setPendingPermission] = useState<PendingPermission | null>(null);
+  const [currentTaskMeta, setCurrentTaskMeta] = useState<CurrentTaskMeta | null>(null);
+  const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
+  const [taskHistoryError, setTaskHistoryError] = useState("");
+  const [agentUsage, setAgentUsage] = useState<AgentUsage | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamBuffer = useRef("");
   const abortController = useRef<AbortController | null>(null);
+  const lastAgentTaskRef = useRef<string | null>(null);
   const isLoading = generationStatus === "generating";
 
   const fetchLocalModels = useCallback(async () => {
@@ -243,6 +305,76 @@ export default function App() {
   }, [workspaceMode]);
 
   useEffect(() => {
+    localStorage.setItem("nebula_execution_mode", executionMode);
+  }, [executionMode]);
+
+  useEffect(() => {
+    void getWorkspaceStatus()
+      .then(setWorkspaceInfo)
+      .catch(() => setWorkspaceInfo(null));
+  }, []);
+
+  const refreshTaskHistory = useCallback(async () => {
+    try {
+      setTaskSummaries(await listTaskSnapshots());
+      setTaskHistoryError("");
+    } catch (error) {
+      setTaskHistoryError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshTaskHistory();
+  }, [refreshTaskHistory]);
+
+  useEffect(() => {
+    if (!currentTaskMeta) return;
+    const timeoutId = window.setTimeout(() => {
+      const finalArtifact =
+        agentState === "completed" && generatedCode
+          ? { language: currentLanguage, content: generatedCode }
+          : null;
+      void saveTaskSnapshot({
+        schemaVersion: 1,
+        taskId: currentTaskMeta.taskId,
+        title: currentTaskMeta.title,
+        mode: workspaceMode,
+        provider,
+        model: selectedModel,
+        status: agentState,
+        plan: agentPlan,
+        toolLog: agentTimeline.map((item) => ({
+          ...item,
+          detail: item.detail?.slice(0, 1000),
+        })),
+        finalArtifact,
+        usage: agentUsage,
+        createdAt: currentTaskMeta.createdAt,
+        updatedAt: Date.now(),
+      })
+        .then(() => {
+          if (agentState === "completed" || agentState === "error" || agentState === "stopped") {
+            void refreshTaskHistory();
+          }
+        })
+        .catch((error) => setTaskHistoryError(error instanceof Error ? error.message : String(error)));
+    }, 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    agentPlan,
+    agentState,
+    agentTimeline,
+    agentUsage,
+    currentLanguage,
+    currentTaskMeta,
+    generatedCode,
+    provider,
+    refreshTaskHistory,
+    selectedModel,
+    workspaceMode,
+  ]);
+
+  useEffect(() => {
     if (currentModel) localStorage.setItem("ollama_model", currentModel);
   }, [currentModel]);
 
@@ -251,12 +383,9 @@ export default function App() {
   }, [orcaRouterModel]);
 
   useEffect(() => {
-    if (rememberApiKey && orcaRouterApiKey) {
-      localStorage.setItem("orcarouter_api_key", orcaRouterApiKey);
-    } else {
-      localStorage.removeItem("orcarouter_api_key");
-    }
-  }, [orcaRouterApiKey, rememberApiKey]);
+    // Agent migration: API keys are memory-only. Remove values saved by older releases.
+    localStorage.removeItem("orcarouter_api_key");
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -277,23 +406,25 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleEscape);
   }, []);
 
-  const selectedModel = provider === "ollama" ? currentModel : orcaRouterModel.trim();
   const canSend = Boolean(
     prompt.trim() &&
       !isLoading &&
       selectedModel &&
-      (provider === "ollama" || orcaRouterApiKey.trim()),
+      (provider === "ollama" || orcaRouterApiKey.trim()) &&
+      (executionMode === "generate" || workspaceInfo),
   );
   const canPreview =
     workspaceMode === "web" && currentLanguage === "html" && Boolean(generatedCode.trim());
 
   const statusLabel = useMemo(() => {
-    if (generationStatus === "generating") return "正在生成";
+    if (generationStatus === "generating") {
+      return executionMode === "agent" ? "Agent 执行中" : "正在生成";
+    }
     if (generationStatus === "done") return "代码已就绪";
     if (generationStatus === "stopped") return "生成已停止";
     if (generationStatus === "error") return "生成失败";
     return "等待新构想";
-  }, [generationStatus]);
+  }, [executionMode, generationStatus]);
 
   const syncAssistantMessage = (content: string) => {
     setMessages((previous) =>
@@ -328,12 +459,19 @@ export default function App() {
 
   const handleReset = () => {
     abortController.current?.abort();
+    pendingPermission?.resolve("deny");
+    setPendingPermission(null);
     setMessages([{ role: "assistant", content: modeConfig.welcome }]);
     setGeneratedCode("");
     setPrompt("");
     setGenerationStatus("idle");
     setActiveTab("code");
     setCurrentLanguage(modeConfig.language);
+    setAgentState("idle");
+    setAgentPlan([]);
+    setAgentTimeline([]);
+    setAgentUsage(null);
+    setCurrentTaskMeta(null);
   };
 
   const handleModeChange = (nextMode: WorkspaceMode) => {
@@ -346,6 +484,10 @@ export default function App() {
     setGenerationStatus("idle");
     setActiveTab("code");
     setCurrentLanguage(nextConfig.language);
+    setAgentState("idle");
+    setAgentPlan([]);
+    setAgentTimeline([]);
+    setAgentUsage(null);
   };
 
   const handleExport = async () => {
@@ -377,13 +519,77 @@ export default function App() {
 
   const handleStop = () => {
     abortController.current?.abort();
+    pendingPermission?.resolve("deny");
+    setPendingPermission(null);
   };
 
-  const handleSend = async () => {
-    if (!canSend) return;
+  const handleSelectWorkspace = async () => {
+    setWorkspaceError("");
+    try {
+      const selected = await selectWorkspaceRoot();
+      if (selected) setWorkspaceInfo(selected);
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : String(error));
+    }
+  };
 
-    const userMessage: ChatMessage = { role: "user", content: prompt.trim() };
-    const requestMessages: ChatMessage[] = [
+  const handleOpenTask = async (taskId: string) => {
+    setTaskHistoryError("");
+    try {
+      const snapshot = await loadTaskSnapshot(taskId);
+      abortController.current?.abort();
+      setExecutionMode("agent");
+      setWorkspaceMode(snapshot.mode);
+      setProvider(snapshot.provider);
+      if (snapshot.provider === "ollama") setCurrentModel(snapshot.model);
+      else setOrcaRouterModel(snapshot.model);
+      setAgentState(snapshot.status);
+      setAgentPlan(snapshot.plan);
+      setAgentTimeline(snapshot.toolLog);
+      setAgentUsage(snapshot.usage ?? null);
+      setCurrentTaskMeta({
+        taskId: snapshot.taskId,
+        title: snapshot.title,
+        createdAt: snapshot.createdAt,
+      });
+      if (snapshot.finalArtifact) {
+        setGeneratedCode(snapshot.finalArtifact.content);
+        setCurrentLanguage(snapshot.finalArtifact.language);
+        setActiveTab(snapshot.mode === "web" ? "preview" : "code");
+      } else {
+        setGeneratedCode("");
+        setCurrentLanguage(MODE_CONFIG[snapshot.mode].language);
+        setActiveTab("code");
+      }
+      setMessages([
+        { role: "assistant", content: MODE_CONFIG[snapshot.mode].welcome },
+        { role: "assistant", content: `已恢复任务快照：${snapshot.title}\n\n状态：${snapshot.status}` },
+      ]);
+      setGenerationStatus(snapshot.status === "completed" ? "done" : "idle");
+    } catch (error) {
+      setTaskHistoryError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handlePermissionDecision = (decision: PermissionDecision) => {
+    const pending = pendingPermission;
+    setPendingPermission(null);
+    pending?.resolve(decision);
+  };
+
+  const handleSend = async (overrideText?: string) => {
+    const requested = (overrideText ?? prompt).trim();
+    if (!requested || isLoading) return;
+    if (
+      !selectedModel ||
+      (provider === "orcarouter" && !orcaRouterApiKey.trim()) ||
+      (executionMode === "agent" && !workspaceInfo)
+    ) {
+      return;
+    }
+
+    const userMessage: ChatMessage = { role: "user", content: requested };
+    const requestMessages: ProviderMessage[] = [
       { role: "system", content: modeConfig.systemPrompt },
       ...messages.slice(1).filter((message) => message.content),
       userMessage,
@@ -396,6 +602,17 @@ export default function App() {
     ]);
     setPrompt("");
     setGenerationStatus("generating");
+    if (executionMode === "agent") {
+      lastAgentTaskRef.current = userMessage.content;
+      const createdAt = Date.now();
+      setCurrentTaskMeta({
+        taskId: crypto.randomUUID(),
+        title: `${modeConfig.label} Agent 任务`,
+        createdAt,
+      });
+    } else {
+      setCurrentTaskMeta(null);
+    }
     streamBuffer.current = "";
 
     const controller = new AbortController();
@@ -407,55 +624,112 @@ export default function App() {
     };
 
     try {
-      if (provider === "ollama") {
-        const response = await fetch(OLLAMA_API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: currentModel,
-            messages: requestMessages,
-            stream: true,
-          }),
+      const activeProvider = provider === "ollama" ? ollamaProvider : orcaRouterProvider;
+      if (executionMode === "agent") {
+        setAgentPlan([]);
+        setAgentTimeline([]);
+        setAgentState("planning");
+        setAgentUsage(null);
+        let currentTurn = "";
+        const result = await runAgentTask({
+          provider: activeProvider,
+          model: selectedModel,
+          apiKey: provider === "orcarouter" ? orcaRouterApiKey : undefined,
+          systemPrompt: modeConfig.systemPrompt,
+          task: userMessage.content,
+          history: requestMessages.slice(1, -1),
+          webMode: workspaceMode === "web",
           signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(await getResponseError(response, "Ollama"));
-        await readNdjsonStream(response, onContent);
-      } else {
-        const response = await fetch(ORCAROUTER_API_URL, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer " + orcaRouterApiKey.trim(),
-            "HTTP-Referer": "https://github.com/luyao001/nebula-ai",
-            "X-Title": "Nebula AI",
+          auditPreview: auditHtmlInPreview,
+          requestPermission: (request) =>
+            new Promise<PermissionDecision>((resolve) => {
+              const handleAbort = () => {
+                setPendingPermission(null);
+                resolve("deny");
+              };
+              controller.signal.addEventListener("abort", handleAbort, { once: true });
+              setPendingPermission({
+                request,
+                resolve: (decision) => {
+                  controller.signal.removeEventListener("abort", handleAbort);
+                  resolve(decision);
+                },
+              });
+            }),
+          onEvent: (event) => {
+            if (event.type === "state") setAgentState(event.state);
+            if (event.type === "plan") setAgentPlan(event.steps);
+            if (event.type === "usage") setAgentUsage(event.usage);
+            if (event.type === "timeline") {
+              setAgentTimeline((previous) => [...previous, event.item]);
+            }
+            if (event.type === "model_started") {
+              currentTurn = "";
+              streamBuffer.current = "";
+            }
+            if (event.type === "content_delta") {
+              currentTurn += event.content;
+              streamBuffer.current = currentTurn;
+              syncAssistantMessage(currentTurn);
+            }
           },
-          body: JSON.stringify({
-            model: orcaRouterModel.trim(),
-            messages: requestMessages,
-            stream: true,
-          }),
-          signal: controller.signal,
         });
-        if (!response.ok) throw new Error(await getResponseError(response, "OrcaRouter"));
-        await readSseStream(response, onContent);
+        if (result.content) syncAssistantMessage(result.content);
+        if (result.artifact) {
+          setGeneratedCode(result.artifact);
+          setCurrentLanguage("html");
+          setActiveTab("preview");
+        }
+      } else {
+        await activeProvider.streamChat(
+          {
+            model: selectedModel,
+            messages: requestMessages,
+            apiKey: provider === "orcarouter" ? orcaRouterApiKey : undefined,
+            signal: controller.signal,
+          },
+          (event) => {
+            if (event.type === "content_delta") onContent(event.content);
+          },
+        );
       }
 
-      if (!streamBuffer.current) throw new Error("模型没有返回内容，请重试。");
+      if (!streamBuffer.current && executionMode === "generate") {
+        throw new Error("模型没有返回内容，请重试。");
+      }
       setGenerationStatus("done");
     } catch (error) {
       if (isAbortError(error)) {
         if (!streamBuffer.current) syncAssistantMessage("已停止生成。");
+        setAgentState("stopped");
         setGenerationStatus("stopped");
+        if (executionMode === "agent") {
+          setAgentTimeline((previous) => [
+            ...previous,
+            {
+              id: crypto.randomUUID(),
+              kind: "stopped",
+              title: "任务已中断",
+              detail: "已完成步骤、时间线与产物已保留；可用下方按钮重试，或从任务历史恢复。",
+              status: "error",
+              timestamp: Date.now(),
+            },
+          ]);
+        }
       } else {
         const detail = error instanceof Error ? error.message : "未知错误";
-        syncAssistantMessage(
-          provider === "ollama"
-            ? "无法连接 Ollama。\n\n请确认服务已启动、模型可用，然后点击左侧刷新按钮重试。\n" + detail
-            : "OrcaRouter 请求失败。\n\n请检查 API Key、模型 ID 和网络连接。\n" + detail,
-        );
+        const prefix =
+          executionMode === "agent"
+            ? "Agent 执行失败。\n\n"
+            : provider === "ollama"
+              ? "无法连接 Ollama。\n\n请确认服务已启动、模型可用，然后点击左侧刷新按钮重试。\n"
+              : "OrcaRouter 请求失败。\n\n请检查 API Key、模型 ID 和网络连接。\n";
+        syncAssistantMessage(prefix + detail);
+        setAgentState("error");
         setGenerationStatus("error");
       }
     } finally {
+      setPendingPermission(null);
       abortController.current = null;
     }
   };
@@ -475,10 +749,10 @@ export default function App() {
               style={{ transform: isSidebarOpen ? "none" : "rotate(180deg)" }}
             />
           </button>
-          <div className="nf-brand" aria-label="Nebula AI">
+          <div className="nf-brand" aria-label="Nova">
             <span className="nf-brand-mark"><Sparkles size={17} /></span>
             <span className="nf-brand-copy">
-              <strong>Nebula AI</strong>
+              <strong>Nova</strong>
               <small>LOCAL · CLOUD · YOURS</small>
             </span>
           </div>
@@ -553,6 +827,31 @@ export default function App() {
                   <option key={mode} value={mode}>{MODE_CONFIG[mode].label}</option>
                 ))}
               </select>
+
+              <label className="nf-model-label" htmlFor="execution-mode">
+                <Workflow size={13} /> Execution
+              </label>
+              <select
+                id="execution-mode"
+                value={executionMode}
+                onChange={(event) => setExecutionMode(event.target.value as ExecutionMode)}
+                className="nf-select"
+                disabled={isLoading}
+              >
+                <option value="generate">普通生成 · 单轮</option>
+                <option value="agent">Agent · 多步执行</option>
+              </select>
+
+              {executionMode === "agent" && (
+                <div className="nf-workspace-auth">
+                  <button type="button" onClick={() => void handleSelectWorkspace()} disabled={isLoading}>
+                    <FolderOpen size={14} />
+                    {workspaceInfo ? "更换工作目录" : "选择工作目录"}
+                  </button>
+                  {workspaceInfo && <small title={workspaceInfo.workspacePath}>{workspaceInfo.workspacePath}</small>}
+                  {workspaceError && <small className="error">{workspaceError}</small>}
+                </div>
+              )}
 
               <label className="nf-model-label" htmlFor="provider">
                 <Cloud size={13} /> Provider
@@ -657,17 +956,18 @@ export default function App() {
                       {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                   </div>
-                  <label className="nf-check-row">
-                    <input
-                      type="checkbox"
-                      checked={rememberApiKey}
-                      onChange={(event) => setRememberApiKey(event.target.checked)}
-                    />
-                    <span>在此设备记住密钥</span>
-                  </label>
                 </>
               )}
             </div>
+
+            {executionMode === "agent" && (
+              <TaskHistory
+                tasks={taskSummaries}
+                error={taskHistoryError}
+                onRefresh={() => void refreshTaskHistory()}
+                onOpen={(taskId) => void handleOpenTask(taskId)}
+              />
+            )}
 
             <div className="nf-sidebar-spacer" />
 
@@ -676,9 +976,7 @@ export default function App() {
               <p>
                 {provider === "ollama"
                   ? "本地模式直接连接你的 Ollama 服务。"
-                  : rememberApiKey
-                    ? "密钥仅保存在此设备的本地存储中。"
-                    : "密钥不会写入本地存储。"}
+                  : "密钥仅保留在当前应用内存中，关闭后即清除。"}
               </p>
             </div>
 
@@ -697,10 +995,26 @@ export default function App() {
               </div>
               <small>{messages.filter((message) => message.role === "user").length} 条指令</small>
             </div>
+            {executionMode === "agent" && (agentPlan.length > 0 || agentTimeline.length > 0) && (
+              <AgentTimeline
+                state={agentState}
+                plan={agentPlan}
+                items={agentTimeline}
+                usage={agentUsage}
+                canRetry={
+                  (generationStatus === "error" || generationStatus === "stopped") &&
+                  Boolean(lastAgentTaskRef.current)
+                }
+                onRetry={() => {
+                  const retryTask = lastAgentTaskRef.current;
+                  if (retryTask) void handleSend(retryTask);
+                }}
+              />
+            )}
             <div className="nf-messages" ref={scrollRef} aria-live="polite">
               {messages.map((message, index) => (
                 <article key={index} className={"nf-message " + message.role}>
-                  <div className="nf-avatar">{message.role === "user" ? "YOU" : "NF"}</div>
+                  <div className="nf-avatar">{message.role === "user" ? "YOU" : "NV"}</div>
                   <div className="nf-content">
                     {message.content ||
                       (isLoading && index === messages.length - 1 ? (
@@ -728,11 +1042,17 @@ export default function App() {
                   placeholder={
                     !selectedModel
                       ? "先在左侧连接一个模型..."
+                      : executionMode === "agent" && !workspaceInfo
+                        ? "先为 Agent 选择一个工作目录..."
                       : provider === "orcarouter" && !orcaRouterApiKey.trim()
                         ? "先填写 OrcaRouter API Key..."
                         : modeConfig.placeholder
                   }
-                  disabled={!selectedModel || (provider === "orcarouter" && !orcaRouterApiKey.trim())}
+                  disabled={
+                    !selectedModel ||
+                    (provider === "orcarouter" && !orcaRouterApiKey.trim()) ||
+                    (executionMode === "agent" && !workspaceInfo)
+                  }
                   rows={4}
                 />
                 <div className="nf-input-footer">
@@ -769,26 +1089,34 @@ export default function App() {
             </div>
             <div className={"nf-frame-container " + (isLoading ? "is-forging" : "")}>
               {activeTab === "code" ? (
-                <Editor
-                  height="100%"
-                  language={currentLanguage}
-                  theme="vs-dark"
-                  value={generatedCode}
-                  onChange={(value) => setGeneratedCode(value || "")}
-                  options={{
-                    fontFamily: "'Cascadia Code', 'SFMono-Regular', Consolas, monospace",
-                    fontSize: 13,
-                    lineHeight: 21,
-                    minimap: { enabled: false },
-                    readOnly: isLoading,
-                    wordWrap: "on",
-                    padding: { top: 18, bottom: 18 },
-                    renderLineHighlight: "line",
-                    smoothScrolling: true,
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                  }}
-                />
+                <Suspense
+                  fallback={
+                    <div className="nf-editor-loading">
+                      <LoaderCircle size={16} className="is-spinning" /> 正在加载编辑器
+                    </div>
+                  }
+                >
+                  <CodeEditor
+                    height="100%"
+                    language={currentLanguage}
+                    theme="vs-dark"
+                    value={generatedCode}
+                    onChange={(value) => setGeneratedCode(value || "")}
+                    options={{
+                      fontFamily: "'Cascadia Code', 'SFMono-Regular', Consolas, monospace",
+                      fontSize: 13,
+                      lineHeight: 21,
+                      minimap: { enabled: false },
+                      readOnly: isLoading,
+                      wordWrap: "on",
+                      padding: { top: 18, bottom: 18 },
+                      renderLineHighlight: "line",
+                      smoothScrolling: true,
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                    }}
+                  />
+                </Suspense>
               ) : canPreview ? (
                 <iframe
                   srcDoc={generatedCode}
@@ -814,6 +1142,12 @@ export default function App() {
           </div>
         </section>
       </main>
+      {pendingPermission && (
+        <PermissionDialog
+          request={pendingPermission.request}
+          onDecision={handlePermissionDecision}
+        />
+      )}
     </div>
   );
 }

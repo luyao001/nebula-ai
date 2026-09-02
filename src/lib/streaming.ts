@@ -1,14 +1,4 @@
-type ContentHandler = (content: string) => void;
-
-type OllamaChunk = {
-  message?: { content?: unknown };
-  error?: unknown;
-};
-
-type CompatibleChunk = {
-  choices?: Array<{ delta?: { content?: unknown } }>;
-  error?: { message?: unknown } | unknown;
-};
+type DataHandler<T> = (data: T) => void;
 
 const getReader = (response: Response) => {
   const reader = response.body?.getReader();
@@ -49,9 +39,10 @@ export const getResponseError = async (response: Response, source: string) => {
   }
 };
 
-export const readNdjsonStream = async (
+export const readNdjsonStream = async <T>(
   response: Response,
-  onContent: ContentHandler,
+  source: string,
+  onData: DataHandler<T>,
 ) => {
   const reader = getReader(response);
   const decoder = new TextDecoder();
@@ -60,12 +51,7 @@ export const readNdjsonStream = async (
   const processLine = (line: string) => {
     const value = line.trim();
     if (!value) return;
-    const chunk = parseJson<OllamaChunk>(value, "Ollama");
-    if (chunk.error) {
-      throw new Error(typeof chunk.error === "string" ? chunk.error : "Ollama 返回错误。");
-    }
-    const content = chunk.message?.content;
-    if (typeof content === "string" && content) onContent(content);
+    onData(parseJson<T>(value, source));
   };
 
   while (true) {
@@ -81,9 +67,10 @@ export const readNdjsonStream = async (
   if (buffer.trim()) processLine(buffer);
 };
 
-export const readSseStream = async (
+export const readSseStream = async <T>(
   response: Response,
-  onContent: ContentHandler,
+  source: string,
+  onData: DataHandler<T>,
 ) => {
   const reader = getReader(response);
   const decoder = new TextDecoder();
@@ -98,19 +85,7 @@ export const readSseStream = async (
       .trim();
 
     if (!payload || payload === "[DONE]") return payload === "[DONE]";
-    const chunk = parseJson<CompatibleChunk>(payload, "OrcaRouter");
-    if (chunk.error) {
-      const message =
-        typeof chunk.error === "object" &&
-        chunk.error &&
-        "message" in chunk.error &&
-        typeof chunk.error.message === "string"
-          ? chunk.error.message
-          : "OrcaRouter 返回错误。";
-      throw new Error(message);
-    }
-    const content = chunk.choices?.[0]?.delta?.content;
-    if (typeof content === "string" && content) onContent(content);
+    onData(parseJson<T>(payload, source));
     return false;
   };
 
