@@ -300,20 +300,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app_dir="src-tauri/target/${{ matrix.target }}/release/bundle/macos"
           dmg_dir="src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
-          set -- "$app_dir"/*.app
-          if [[ "$#" -ne 1 || ! -d "$1" ]]; then
-            echo "Expected exactly one macOS app bundle in $app_dir." >&2
-            exit 1
-          fi
-          codesign --verify --deep --strict --verbose=2 "$1"
           set -- "$dmg_dir"/*.dmg
           if [[ "$#" -ne 1 || ! -f "$1" ]]; then
             echo "Expected exactly one DMG in $dmg_dir." >&2
             exit 1
           fi
           hdiutil verify "$1"
+          # Tauri removes the staged .app after building the DMG, so verify the
+          # signature from a read-only mount of the image itself.
+          verify_mount="$(mktemp -d)/nova-verify"
+          mkdir -p "$verify_mount"
+          hdiutil attach "$1" -readonly -nobrowse -mountpoint "$verify_mount" >/dev/null
+          codesign --verify --deep --strict --verbose=2 "$verify_mount/Nova.app"
+          hdiutil detach "$verify_mount" >/dev/null
           mkdir -p final-assets
           cp "$1" "final-assets/Nova_${{ needs.metadata.outputs.asset_version }}_macos_${{ matrix.asset_arch }}.dmg"
 
