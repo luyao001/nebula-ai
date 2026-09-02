@@ -167,6 +167,10 @@ jobs:
             asset_arch: x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      # Vite's transform of the Monaco bundle exceeds the ~2 GB default
+      # Node heap on arm64 runners.
+      NODE_OPTIONS: --max-old-space-size=4096
     permissions:
       actions: read
       attestations: write
