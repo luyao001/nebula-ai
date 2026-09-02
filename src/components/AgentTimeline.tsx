@@ -57,6 +57,7 @@ function TimelineEntry({ item }: { item: AgentTimelineItem }) {
   const [showResult, setShowResult] = useState(false);
   const hasIssues = Boolean(item.issues?.length);
   const hasResult = Boolean(item.result);
+  const canExpandDetail = Boolean(item.detail && item.detail.length > 120);
 
   return (
     <article className={item.status + (expanded ? " expanded" : "")}>
@@ -65,6 +66,12 @@ function TimelineEntry({ item }: { item: AgentTimelineItem }) {
         <strong>{item.title}</strong>
         {item.detail && (
           <p className={expanded ? "" : "clamped"}>{item.detail}</p>
+        )}
+        {canExpandDetail && (
+          <button type="button" className="nf-agent-more" onClick={() => setExpanded((value) => !value)}>
+            {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            {expanded ? "收起详情" : "展开详情"}
+          </button>
         )}
         {hasIssues && (
           <ul className="nf-agent-issues">

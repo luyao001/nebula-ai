@@ -28,6 +28,52 @@ const runnerOptions = {
 };
 
 describe("runAgentTask", () => {
+  it("lets the model report meaningful progress between plan stages", async () => {
+    const emitted: AgentRunnerEvent[] = [];
+    let turn = 0;
+    const provider: ChatProvider = {
+      id: "ollama",
+      async streamChat() {
+        turn += 1;
+        if (turn === 1) {
+          return {
+            content: "",
+            toolCalls: [{
+              id: "plan",
+              index: 0,
+              name: "report_plan",
+              arguments: JSON.stringify({ steps: ["inspect", "change", "verify"] }),
+            }],
+            finishReason: "tool_calls",
+          };
+        }
+        if (turn === 2) {
+          return {
+            content: "",
+            toolCalls: [{
+              id: "progress",
+              index: 0,
+              name: "update_plan",
+              arguments: JSON.stringify({ completed_steps: 1, note: "inspection complete" }),
+            }],
+            finishReason: "tool_calls",
+          };
+        }
+        return { content: "done", toolCalls: [], finishReason: "stop" };
+      },
+    };
+
+    await runAgentTask({ provider, ...runnerOptions, onEvent: (event) => emitted.push(event) });
+    const plans = emitted
+      .filter((event): event is Extract<AgentRunnerEvent, { type: "plan" }> => event.type === "plan")
+      .map((event) => event.steps.map((step) => step.status));
+    expect(plans).toContainEqual(["completed", "in_progress", "pending"]);
+    const progressEvent = emitted.find(
+      (event) => event.type === "timeline" && event.item.title === "进入计划步骤 2/3",
+    );
+    expect(progressEvent).toBeTruthy();
+  });
+
   it("keeps assistant tool_calls and tool results protocol-complete when a turn returns more than four calls", async () => {
     let turn = 0;
     const provider: ChatProvider = {

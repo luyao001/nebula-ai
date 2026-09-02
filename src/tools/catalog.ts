@@ -24,6 +24,32 @@ export const AGENT_TOOLS: FunctionTool[] = [
   {
     type: "function",
     function: {
+      name: "update_plan",
+      description:
+        "Update execution progress when moving between plan stages. Call after completing a meaningful stage, not after every small tool call.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["completed_steps"],
+        properties: {
+          completed_steps: {
+            type: "integer",
+            minimum: 0,
+            maximum: 12,
+            description: "Number of leading plan steps that are complete.",
+          },
+          note: {
+            type: "string",
+            maxLength: 300,
+            description: "Optional concise evidence or reason for the progress update.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "read_file",
       description: "Read one UTF-8 text file from the authorized workspace or the temporary sandbox.",
       parameters: {

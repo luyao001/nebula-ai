@@ -58,7 +58,8 @@ new workspace session is initialized.
 ## Agent task snapshots
 
 Agent tasks store versioned JSON snapshots in Nova's application data
-directory. A snapshot contains the execution plan, status, provider/model names,
+directory. A snapshot contains a short task title derived from the beginning of
+the submitted Agent prompt, the execution plan, status, provider/model names,
 bounded and redacted tool timeline metadata, and an optional final artifact. It
 does not contain API keys, authorization headers, environment variables, raw
 conversation messages, or complete tool outputs. Snapshots are created only for

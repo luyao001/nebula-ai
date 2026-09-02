@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Braces,
+  Bot,
   Check,
   Cloud,
   Code,
@@ -9,11 +10,17 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileText,
+  FolderGit2,
   FolderOpen,
+  GripHorizontal,
+  GripVertical,
   KeyRound,
+  Layers3,
   LoaderCircle,
   MessageSquare,
   PanelLeftClose,
+  Plus,
   RefreshCw,
   RotateCcw,
   Send,
@@ -24,6 +31,7 @@ import {
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { Group, Panel, Separator } from "react-resizable-panels";
 import { createOllamaProvider, createOpenAiCompatibleProvider } from "./providers";
 import type { ProviderMessage } from "./providers";
 import { runAgentTask } from "./agent/runner";
@@ -96,6 +104,9 @@ const MODE_CONFIG: Record<
   WorkspaceMode,
   {
     label: string;
+    hero: string;
+    description: string;
+    suggestions: { title: string; prompt: string }[];
     systemPrompt: string;
     welcome: string;
     placeholder: string;
@@ -107,6 +118,13 @@ const MODE_CONFIG: Record<
 > = {
   web: {
     label: "网页构建",
+    hero: "把想法推进到可运行页面",
+    description: "从需求出发生成完整 HTML，在同一工作区里继续编辑、预览并完成自检。",
+    suggestions: [
+      { title: "产品落地页", prompt: "为一款开发者工具设计一个响应式产品落地页，包含清晰价值主张、功能说明和行动入口。" },
+      { title: "数据仪表盘", prompt: "创建一个桌面优先的数据仪表盘，包含筛选、趋势概览、异常状态和响应式布局。" },
+      { title: "交互原型", prompt: "实现一个具有真实交互和完整空状态的单页应用原型，并确保键盘可访问。" },
+    ],
     systemPrompt:
       "你是 Nova 的网页工程助手。生成完整、可直接运行的单文件 HTML，" +
       "代码必须放在一个 html Markdown 代码块中。确保页面响应式、具有基本无障碍支持，解释保持简短。",
@@ -119,6 +137,13 @@ const MODE_CONFIG: Record<
   },
   code: {
     label: "代码助手",
+    hero: "从问题定位到可验证改动",
+    description: "让 Nova 编写、解释或修复代码；Agent 模式还能在授权目录中读取文件并运行检查。",
+    suggestions: [
+      { title: "定位错误", prompt: "分析当前错误的根因，给出最小修复，并说明如何验证修复没有引入回归。" },
+      { title: "安全重构", prompt: "重构这段实现以降低复杂度，保持现有行为不变，并补充关键测试。" },
+      { title: "补全测试", prompt: "梳理核心边界条件并生成一组可直接运行的单元测试。" },
+    ],
     systemPrompt:
       "你是 Nova 的资深软件工程助手。根据需求生成、解释、重构或修复代码。" +
       "把主要成果放在一个带准确语言标记的 Markdown 代码块中，说明保持简洁，并指出必要的运行方式。",
@@ -131,6 +156,13 @@ const MODE_CONFIG: Record<
   },
   writing: {
     label: "内容创作",
+    hero: "把零散要点变成可交付文稿",
+    description: "围绕读者、目的和事实边界组织内容，生成可继续编辑与导出的 Markdown。",
+    suggestions: [
+      { title: "撰写方案", prompt: "把我的要点整理成一份面向决策者的实施方案，包含目标、路径、风险与下一步。" },
+      { title: "润色文稿", prompt: "在不改变原意的前提下润色下面的文稿，让结构更清晰、表达更自然。" },
+      { title: "建立提纲", prompt: "根据主题和目标读者建立一份层级清楚、便于继续扩写的内容提纲。" },
+    ],
     systemPrompt:
       "你是 Nova 的中文写作伙伴。根据目标读者、语气和用途输出结构清晰的 Markdown 文稿。" +
       "保留事实边界，不编造来源；需要信息时明确标注待核实项。",
@@ -143,6 +175,13 @@ const MODE_CONFIG: Record<
   },
   assistant: {
     label: "通用问答",
+    hero: "先理清问题，再给出下一步",
+    description: "适合分析、总结和规划；不确定的信息会明确标注，不把推测写成事实。",
+    suggestions: [
+      { title: "分析取舍", prompt: "帮我拆解这个决策的目标、约束、备选方案和关键取舍，并给出建议。" },
+      { title: "制定计划", prompt: "把这个目标转成分阶段、可验证的行动计划，并指出最可能的风险。" },
+      { title: "提炼信息", prompt: "总结下面的材料，提炼关键结论、证据、争议点和待确认事项。" },
+    ],
     systemPrompt:
       "你是 Nova 的通用助理。直接、准确地回答问题；复杂任务使用清晰结构，" +
       "不确定的信息要明确说明，不能假装完成外部操作。",
@@ -199,6 +238,24 @@ const extractCode = (text: string) => {
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === "AbortError";
 
+const taskTitleFromPrompt = (prompt: string, fallback: string) => {
+  const singleLine = prompt.replace(/\s+/g, " ").trim();
+  if (!singleLine) return fallback;
+  return singleLine.length > 32 ? `${singleLine.slice(0, 32)}…` : singleLine;
+};
+
+const workspaceNameFromPath = (path: string) => {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || path;
+};
+
+function WorkspaceModeIcon({ mode, size = 15 }: { mode: WorkspaceMode; size?: number }) {
+  if (mode === "web") return <Braces size={size} />;
+  if (mode === "code") return <Code size={size} />;
+  if (mode === "writing") return <FileText size={size} />;
+  return <MessageSquare size={size} />;
+}
+
 // Monaco is heavy; load it (and its worker wiring) in an async chunk so the
 // app shell paints without waiting for the editor bundle.
 const CodeEditor = lazy(async () => {
@@ -252,8 +309,10 @@ export default function App() {
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [taskHistoryError, setTaskHistoryError] = useState("");
   const [agentUsage, setAgentUsage] = useState<AgentUsage | null>(null);
+  const [isCompactLayout, setIsCompactLayout] = useState(() => window.innerWidth <= 640);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const streamBuffer = useRef("");
   const abortController = useRef<AbortController | null>(null);
   const lastAgentTaskRef = useRef<string | null>(null);
@@ -397,13 +456,26 @@ export default function App() {
   }, [messages]);
 
   useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
+    const handleKeyboardShortcut = (event: KeyboardEvent) => {
       if (event.key === "Escape" && abortController.current) {
         abortController.current.abort();
       }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setIsSidebarOpen((open) => !open);
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        composerRef.current?.focus();
+      }
     };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
+    const handleResize = () => setIsCompactLayout(window.innerWidth <= 640);
+    window.addEventListener("keydown", handleKeyboardShortcut);
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("keydown", handleKeyboardShortcut);
+      window.removeEventListener("resize", handleResize);
+    };
   }, []);
 
   const canSend = Boolean(
@@ -415,6 +487,22 @@ export default function App() {
   );
   const canPreview =
     workspaceMode === "web" && currentLanguage === "html" && Boolean(generatedCode.trim());
+  const composerBlocker = !selectedModel
+    ? "连接模型后即可发送"
+    : provider === "orcarouter" && !orcaRouterApiKey.trim()
+      ? "填写 OrcaRouter API Key 后即可发送"
+      : executionMode === "agent" && !workspaceInfo
+        ? "为 Agent 选择工作目录后即可发送"
+        : "Enter 发送 · Shift+Enter 换行 · Ctrl+K 聚焦";
+  const providerState = provider === "ollama"
+    ? ollamaStatus === "online"
+      ? "ready"
+      : ollamaStatus === "checking"
+        ? "checking"
+        : "blocked"
+    : orcaRouterApiKey.trim()
+      ? "ready"
+      : "blocked";
 
   const statusLabel = useMemo(() => {
     if (generationStatus === "generating") {
@@ -472,6 +560,8 @@ export default function App() {
     setAgentTimeline([]);
     setAgentUsage(null);
     setCurrentTaskMeta(null);
+    lastAgentTaskRef.current = null;
+    window.setTimeout(() => composerRef.current?.focus(), 0);
   };
 
   const handleModeChange = (nextMode: WorkspaceMode) => {
@@ -607,7 +697,7 @@ export default function App() {
       const createdAt = Date.now();
       setCurrentTaskMeta({
         taskId: crypto.randomUUID(),
-        title: `${modeConfig.label} Agent 任务`,
+        title: taskTitleFromPrompt(userMessage.content, `${modeConfig.label} Agent 任务`),
         createdAt,
       });
     } else {
@@ -753,8 +843,35 @@ export default function App() {
             <span className="nf-brand-mark"><Sparkles size={17} /></span>
             <span className="nf-brand-copy">
               <strong>Nova</strong>
-              <small>LOCAL · CLOUD · YOURS</small>
+              <small>AGENT WORKBENCH</small>
             </span>
+          </div>
+        </div>
+
+        <div className="nf-context-ribbon" aria-label="当前任务上下文">
+          <div>
+            <FolderGit2 size={13} />
+            <span>范围</span>
+            <strong>
+              {executionMode === "agent"
+                ? workspaceInfo
+                  ? workspaceNameFromPath(workspaceInfo.workspacePath)
+                  : "待选择目录"
+                : "独立任务"}
+            </strong>
+          </div>
+          <div>
+            <Bot size={13} />
+            <span>执行</span>
+            <strong>{executionMode === "agent" ? "Agent" : "快速生成"}</strong>
+          </div>
+          <div className={`provider-${providerState}`}>
+            <Cloud size={13} />
+            <span>模型</span>
+            <strong title={selectedModel || undefined}>
+              {provider === "ollama" ? "Ollama" : "OrcaRouter"}
+              {selectedModel ? ` / ${selectedModel}` : " / 未连接"}
+            </strong>
           </div>
         </div>
 
@@ -763,40 +880,9 @@ export default function App() {
             <span className="nf-status-dot" />
             <span>{statusLabel}</span>
           </div>
-          <div className="nf-tab-group" aria-label="输出视图">
-            <button
-              className={activeTab === "code" ? "active" : ""}
-              onClick={() => setActiveTab("code")}
-              aria-pressed={activeTab === "code"}
-            >
-              <Code size={15} /> <span className="hide-sm">代码</span>
-            </button>
-            <button
-              className={activeTab === "preview" ? "active" : ""}
-              onClick={() => setActiveTab("preview")}
-              aria-pressed={activeTab === "preview"}
-              disabled={workspaceMode !== "web"}
-              title={workspaceMode === "web" ? "预览网页" : "仅网页构建模式支持预览"}
-            >
-              <Eye size={15} /> <span className="hide-sm">预览</span>
-            </button>
-          </div>
-          <button
-            className="nf-export-button"
-            onClick={() => void handleExport()}
-            disabled={!generatedCode}
-            title="导出成果"
-            aria-label="导出成果"
-          >
-            <Download size={16} />
-          </button>
-          <button
-            className="nf-copy-button"
-            onClick={() => void handleCopy()}
-            disabled={!generatedCode}
-          >
-            {isCopied ? <Check size={16} /> : <Copy size={16} />}
-            <span className="hide-sm">{isCopied ? "已复制" : "复制代码"}</span>
+          <button className="nf-new-task-button" onClick={handleReset} title="新任务">
+            <Plus size={15} />
+            <span className="hide-sm">新任务</span>
           </button>
         </div>
       </header>
@@ -806,15 +892,15 @@ export default function App() {
           <div className="nf-sidebar-inner">
             <div className="nf-rail-heading">
               <div>
-                <span className="nf-eyebrow">WORKSPACE</span>
-                <h2>工作区设置</h2>
+                <span className="nf-eyebrow">CONTROL DECK</span>
+                <h2>任务控制台</h2>
               </div>
               <ShieldCheck size={18} />
             </div>
 
             <div className="nf-model-box">
               <label className="nf-model-label" htmlFor="workspace-mode">
-                <Braces size={13} /> Mode
+                <WorkspaceModeIcon mode={workspaceMode} size={13} /> 任务类型
               </label>
               <select
                 id="workspace-mode"
@@ -827,9 +913,10 @@ export default function App() {
                   <option key={mode} value={mode}>{MODE_CONFIG[mode].label}</option>
                 ))}
               </select>
+              <p className="nf-field-note">{modeConfig.description}</p>
 
               <label className="nf-model-label" htmlFor="execution-mode">
-                <Workflow size={13} /> Execution
+                <Workflow size={13} /> 执行方式
               </label>
               <select
                 id="execution-mode"
@@ -854,7 +941,7 @@ export default function App() {
               )}
 
               <label className="nf-model-label" htmlFor="provider">
-                <Cloud size={13} /> Provider
+                <Cloud size={13} /> 模型服务
               </label>
               <select
                 id="provider"
@@ -871,7 +958,7 @@ export default function App() {
                 <>
                   <div className="nf-label-row">
                     <label className="nf-model-label" htmlFor="ollama-model">
-                      <Cpu size={13} /> Model
+                      <Cpu size={13} /> 模型
                     </label>
                     <button
                       className="nf-refresh-button"
@@ -917,7 +1004,7 @@ export default function App() {
               ) : (
                 <>
                   <label className="nf-model-label" htmlFor="orcarouter-model">
-                    <Cpu size={13} /> Model ID
+                    <Cpu size={13} /> 模型 ID
                   </label>
                   <input
                     id="orcarouter-model"
@@ -985,9 +1072,27 @@ export default function App() {
             </button>
           </div>
         </aside>
+        {isSidebarOpen && (
+          <button
+            className="nf-sidebar-scrim"
+            type="button"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-label="关闭任务控制台"
+          />
+        )}
 
-        <section className="nf-workspace">
-          <div className="nf-chat">
+        <Group
+          key={isCompactLayout ? "compact-workspace" : "wide-workspace"}
+          className="nf-workspace"
+          orientation={isCompactLayout ? "vertical" : "horizontal"}
+        >
+          <Panel
+            id="conversation"
+            defaultSize={isCompactLayout ? "48%" : "38%"}
+            minSize={isCompactLayout ? "250px" : "320px"}
+            maxSize={isCompactLayout ? "68%" : "58%"}
+          >
+            <div className="nf-chat">
             <div className="nf-panel-heading">
               <div>
                 <MessageSquare size={14} />
@@ -1012,24 +1117,49 @@ export default function App() {
               />
             )}
             <div className="nf-messages" ref={scrollRef} aria-live="polite">
-              {messages.map((message, index) => (
-                <article key={index} className={"nf-message " + message.role}>
-                  <div className="nf-avatar">{message.role === "user" ? "YOU" : "NV"}</div>
-                  <div className="nf-content">
-                    {message.content ||
-                      (isLoading && index === messages.length - 1 ? (
-                        <span className="nf-thinking">
-                          <LoaderCircle size={14} className="is-spinning" /> 正在组织代码
-                        </span>
-                      ) : null)}
+              {messages.length === 1 ? (
+                <section className="nf-launchpad" aria-labelledby="launchpad-title">
+                  <span className="nf-launchpad-kicker">START WITH AN OUTCOME</span>
+                  <div className="nf-launchpad-mark"><WorkspaceModeIcon mode={workspaceMode} size={22} /></div>
+                  <h1 id="launchpad-title">{modeConfig.hero}</h1>
+                  <p>{modeConfig.description}</p>
+                  <div className="nf-suggestion-grid" aria-label="任务模板">
+                    {modeConfig.suggestions.map((suggestion, index) => (
+                      <button
+                        key={suggestion.title}
+                        type="button"
+                        onClick={() => {
+                          setPrompt(suggestion.prompt);
+                          window.setTimeout(() => composerRef.current?.focus(), 0);
+                        }}
+                      >
+                        <span>0{index + 1}</span>
+                        <strong>{suggestion.title}</strong>
+                      </button>
+                    ))}
                   </div>
-                </article>
-              ))}
+                </section>
+              ) : (
+                messages.slice(1).map((message, index) => (
+                  <article key={index} className={"nf-message " + message.role}>
+                    <div className="nf-avatar">{message.role === "user" ? "你" : "N"}</div>
+                    <div className="nf-content">
+                      {message.content ||
+                        (isLoading && index === messages.length - 2 ? (
+                          <span className="nf-thinking">
+                            <LoaderCircle size={14} className="is-spinning" /> 正在推进任务
+                          </span>
+                        ) : null)}
+                    </div>
+                  </article>
+                ))
+              )}
             </div>
             <div className="nf-input-container">
-              <label className="sr-only" htmlFor="forge-prompt">描述要构建的网页</label>
+              <label className="sr-only" htmlFor="forge-prompt">描述要完成的任务</label>
               <div className="nf-input-wrapper">
                 <textarea
+                  ref={composerRef}
                   id="forge-prompt"
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
@@ -1039,24 +1169,24 @@ export default function App() {
                       void handleSend();
                     }
                   }}
-                  placeholder={
-                    !selectedModel
-                      ? "先在左侧连接一个模型..."
-                      : executionMode === "agent" && !workspaceInfo
-                        ? "先为 Agent 选择一个工作目录..."
-                      : provider === "orcarouter" && !orcaRouterApiKey.trim()
-                        ? "先填写 OrcaRouter API Key..."
-                        : modeConfig.placeholder
-                  }
-                  disabled={
-                    !selectedModel ||
-                    (provider === "orcarouter" && !orcaRouterApiKey.trim()) ||
-                    (executionMode === "agent" && !workspaceInfo)
-                  }
+                  placeholder={modeConfig.placeholder}
+                  disabled={isLoading}
+                  aria-describedby="composer-hint"
                   rows={4}
                 />
                 <div className="nf-input-footer">
-                  <span>Enter 发送 · Shift+Enter 换行</span>
+                  <div className="nf-composer-meta">
+                    <button
+                      type="button"
+                      onClick={() => setExecutionMode((mode) => mode === "agent" ? "generate" : "agent")}
+                      disabled={isLoading}
+                      title="切换执行方式"
+                    >
+                      {executionMode === "agent" ? <Bot size={12} /> : <Sparkles size={12} />}
+                      {executionMode === "agent" ? "Agent" : "快速生成"}
+                    </button>
+                    <span id="composer-hint" className={canSend ? "" : "blocked"}>{composerBlocker}</span>
+                  </div>
                   {isLoading ? (
                     <button className="nf-stop-button" onClick={handleStop} title="停止生成 (Esc)">
                       <Square size={13} fill="currentColor" /> 停止
@@ -1066,7 +1196,8 @@ export default function App() {
                       className="nf-send-button"
                       onClick={() => void handleSend()}
                       disabled={!canSend}
-                      aria-label="发送构想"
+                      aria-label="发送任务"
+                      title={canSend ? "发送任务" : composerBlocker}
                     >
                       <Send size={17} />
                     </button>
@@ -1074,21 +1205,77 @@ export default function App() {
                 </div>
               </div>
             </div>
-          </div>
+            </div>
+          </Panel>
 
-          <div className="nf-output">
+          <Separator className="nf-resize-handle" aria-label="调整对话与成果区域大小">
+            {isCompactLayout ? <GripHorizontal size={14} /> : <GripVertical size={14} />}
+          </Separator>
+
+          <Panel id="artifact" defaultSize={isCompactLayout ? "52%" : "62%"} minSize="280px">
+            <div className="nf-output">
             <div className="nf-panel-heading nf-output-heading">
               <div>
-                <Braces size={14} />
+                <Layers3 size={14} />
                 <span>{modeConfig.outputLabel}</span>
               </div>
-              <div className="nf-output-meta">
-                <span className="nf-language">{currentLanguage}</span>
-                <span>{generatedCode.length.toLocaleString()} 字符</span>
+              <div className="nf-output-actions">
+                <div className="nf-tab-group" aria-label="输出视图">
+                  <button
+                    className={activeTab === "code" ? "active" : ""}
+                    onClick={() => setActiveTab("code")}
+                    aria-pressed={activeTab === "code"}
+                  >
+                    <Code size={13} /> <span>成果</span>
+                  </button>
+                  <button
+                    className={activeTab === "preview" ? "active" : ""}
+                    onClick={() => setActiveTab("preview")}
+                    aria-pressed={activeTab === "preview"}
+                    disabled={workspaceMode !== "web"}
+                    title={workspaceMode === "web" ? "预览网页" : "仅网页构建模式支持预览"}
+                  >
+                    <Eye size={13} /> <span>预览</span>
+                  </button>
+                </div>
+                <div className="nf-output-meta">
+                  <span className="nf-language">{currentLanguage}</span>
+                  <span>{generatedCode.length.toLocaleString()} 字符</span>
+                </div>
+                <button
+                  className="nf-export-button"
+                  onClick={() => void handleExport()}
+                  disabled={!generatedCode}
+                  title="导出成果"
+                  aria-label="导出成果"
+                >
+                  <Download size={15} />
+                </button>
+                <button
+                  className="nf-copy-button"
+                  onClick={() => void handleCopy()}
+                  disabled={!generatedCode}
+                  title={isCopied ? "已复制" : "复制成果"}
+                >
+                  {isCopied ? <Check size={15} /> : <Copy size={15} />}
+                  <span className="hide-md">{isCopied ? "已复制" : "复制"}</span>
+                </button>
               </div>
             </div>
             <div className={"nf-frame-container " + (isLoading ? "is-forging" : "")}>
-              {activeTab === "code" ? (
+              {!generatedCode ? (
+                <div className="nf-artifact-empty">
+                  <div className="nf-artifact-empty-mark"><Layers3 size={23} /></div>
+                  <span>ARTIFACT WORKSPACE</span>
+                  <h2>成果将在这里形成</h2>
+                  <p>Nova 会把任务输出整理为可编辑成果；网页模式还能直接预览并执行运行时自检。</p>
+                  <ol>
+                    <li><b>01</b><span>描述目标</span></li>
+                    <li><b>02</b><span>执行与验证</span></li>
+                    <li><b>03</b><span>审查并导出</span></li>
+                  </ol>
+                </div>
+              ) : activeTab === "code" ? (
                 <Suspense
                   fallback={
                     <div className="nf-editor-loading">
@@ -1139,8 +1326,9 @@ export default function App() {
                 </div>
               )}
             </div>
-          </div>
-        </section>
+            </div>
+          </Panel>
+        </Group>
       </main>
       {pendingPermission && (
         <PermissionDialog

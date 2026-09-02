@@ -80,12 +80,18 @@ def run_browser_contracts() -> None:
         assert page.locator("strong", has_text="Nova").first.is_visible()
         assert page.evaluate("localStorage.getItem('orcarouter_api_key')") is None
         assert page.locator("text=在此设备记住密钥").count() == 0
+        assert page.get_by_role("heading", name="把想法推进到可运行页面").is_visible()
+        assert page.locator(".nf-artifact-empty").is_visible()
+        assert page.locator(".monaco-editor").count() == 0
+        page.get_by_role("button", name="产品落地页").click()
+        assert "产品落地页" in page.locator("#forge-prompt").input_value()
 
         page.locator("#provider").select_option("orcarouter")
         page.locator("#orcarouter-key").fill("memory-only-test-key")
         page.locator("#execution-mode").select_option("agent")
         assert page.get_by_role("button", name="选择工作目录").is_visible()
-        assert page.locator("#forge-prompt").is_disabled()
+        assert page.locator("#forge-prompt").is_enabled()
+        assert page.get_by_role("button", name="发送任务").is_disabled()
 
         preview_ok = page.evaluate(
             """async () => {
@@ -102,6 +108,39 @@ def run_browser_contracts() -> None:
         )
         assert preview_bad["passed"] is False
         assert any("boom" in issue["message"] for issue in preview_bad["issues"])
+
+        online_context = browser.new_context(viewport={"width": 1280, "height": 800})
+        online_page = online_context.new_page()
+        online_page.route(
+            OLLAMA_TAGS_URL := "http://localhost:11434/api/tags",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"models":[{"name":"qwen-test"}]}',
+            ),
+        )
+        online_page.route(
+            "http://localhost:11434/api/chat",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/x-ndjson",
+                body=(
+                    '{"message":{"content":"```html\\n<!doctype html><html><head><title>Nova test</title></head>'
+                    '<body><main>可运行成果</main></body></html>\\n```"},"done":false}\n'
+                    '{"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":5}\n'
+                ),
+            ),
+        )
+        online_page.goto(f"http://{HOST}:{PORT}")
+        online_page.wait_for_load_state("networkidle")
+        assert online_page.locator(f"text={OLLAMA_TAGS_URL}").count() == 0
+        online_page.locator("#forge-prompt").fill("生成一个测试页面")
+        online_page.get_by_role("button", name="发送任务").click()
+        online_page.get_by_text("代码已就绪").wait_for()
+        online_page.locator(".monaco-editor").wait_for()
+        online_page.get_by_role("button", name="预览", exact=True).click()
+        assert online_page.frame_locator("iframe").get_by_text("可运行成果").is_visible()
+        online_context.close()
 
         unexpected = [
             error

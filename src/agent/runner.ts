@@ -126,6 +126,7 @@ export const runAgentTask = async ({
       content:
         systemPrompt +
         "\n\nYou are running inside Nova Agent. First call report_plan with a concise plan. " +
+        "Call update_plan after completing a meaningful plan stage so progress stays accurate. " +
         "Use tools when evidence or local changes are needed. Never claim a tool succeeded without its result. " +
         "Use safe relative paths. Before writing to the workspace, write the exact content to the temporary sandbox and validate it there. " +
         "Commands can only validate files already placed in the temporary sandbox. " +
@@ -275,6 +276,41 @@ export const runAgentTask = async ({
         onEvent({ type: "plan", steps: plan });
         onEvent({ type: "timeline", item: timeline("plan", "执行计划已建立", "success", titles.join("\n")) });
         messages.push(toolResultMessage(toolCall, JSON.stringify({ ok: true, steps: titles })));
+        continue;
+      }
+
+      if (toolCall.name === "update_plan") {
+        if (!plan.length) {
+          messages.push(toolResultMessage(toolCall, JSON.stringify({ ok: false, error: "report_plan must be called first" })));
+          continue;
+        }
+        const requestedCompleted = argumentsValue.completed_steps;
+        if (typeof requestedCompleted !== "number" || !Number.isInteger(requestedCompleted)) {
+          messages.push(toolResultMessage(toolCall, JSON.stringify({ ok: false, error: "completed_steps must be an integer" })));
+          continue;
+        }
+        const completedSteps = Math.max(0, Math.min(plan.length, requestedCompleted));
+        plan = plan.map((item, index) => ({
+          ...item,
+          status:
+            index < completedSteps
+              ? "completed" as const
+              : index === completedSteps
+                ? "in_progress" as const
+                : "pending" as const,
+        }));
+        const note = typeof argumentsValue.note === "string" ? argumentsValue.note.trim() : "";
+        onEvent({ type: "plan", steps: plan });
+        onEvent({
+          type: "timeline",
+          item: timeline(
+            "plan",
+            completedSteps === plan.length ? "计划步骤已全部完成" : `进入计划步骤 ${completedSteps + 1}/${plan.length}`,
+            "success",
+            note || undefined,
+          ),
+        });
+        messages.push(toolResultMessage(toolCall, JSON.stringify({ ok: true, completedSteps, totalSteps: plan.length })));
         continue;
       }
 

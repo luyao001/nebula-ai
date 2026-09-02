@@ -96,6 +96,7 @@ export const createOpenAiCompatibleProvider = ({
         model: request.model,
         messages: request.messages.map(encodeMessage),
         stream: true,
+        stream_options: { include_usage: true },
         ...(request.tools?.length
           ? {
               tools: request.tools,
