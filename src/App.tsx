@@ -62,7 +62,7 @@ const ORCAROUTER_DEFAULT_MODELS = [
 const ollamaProvider = createOllamaProvider(OLLAMA_API_URL);
 const orcaRouterProvider = createOpenAiCompatibleProvider({
   chatUrl: ORCAROUTER_API_URL,
-  referer: "https://github.com/luyao001/nebula-ai",
+  referer: "https://github.com/luyao001/nova",
   title: "Nova",
 });
 

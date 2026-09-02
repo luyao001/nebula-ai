@@ -1,7 +1,7 @@
 # Code signing policy
 
 Nebula AI publishes Windows installers built from the source code in the
-official [luyao001/nebula-ai](https://github.com/luyao001/nebula-ai)
+official [luyao001/nova](https://github.com/luyao001/nova)
 repository. Release artifacts submitted for signing must come from a tagged
 commit owned by this repository and must use the same product name and version
 as the tag.

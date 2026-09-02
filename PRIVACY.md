@@ -81,4 +81,4 @@ removing Nova's application data after uninstalling.
 ## Contact
 
 Privacy or security questions can be reported through the project's
-[GitHub Issues](https://github.com/luyao001/nebula-ai/issues).
+[GitHub Issues](https://github.com/luyao001/nova/issues).
