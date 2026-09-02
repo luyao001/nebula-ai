@@ -1,6 +1,6 @@
 [package]
 name = "nebula-ai"
-version = "0.2.1"
+version = "0.3.0"
 description = "A local-first, multi-mode AI workspace"
 authors = ["luyao001"]
 license = "MIT"

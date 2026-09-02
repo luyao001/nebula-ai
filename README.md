@@ -114,7 +114,7 @@ Ollama 模式直接访问本机服务。OrcaRouter 模式会把当前对话发�
 
 ## Code signing policy
 
-Nova 正在申请 SignPath Foundation 的开源代码签名服务。v0.2.1 的自动签名发布流程已经就绪，并会在缺少可信签名时阻止发布。完整要求参见 [Code signing policy](CODE_SIGNING_POLICY.md) 和 [Trusted release setup](SIGNING_SETUP.md)。
+Nova 正在申请 SignPath Foundation 的开源代码签名服务。v0.3.0 的自动签名发布流程已经就绪，并会在缺少可信签名时阻止发布。完整要求参见 [Code signing policy](CODE_SIGNING_POLICY.md) 和 [Trusted release setup](SIGNING_SETUP.md)。
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 

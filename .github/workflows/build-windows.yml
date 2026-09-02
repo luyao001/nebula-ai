@@ -115,13 +115,13 @@ jobs:
 
           $version = "${{ github.ref_name }}" -replace '^v', ''
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
-          $destination = Join-Path (Resolve-Path release-assets) "Nebula-AI_${version}_x64-setup.exe"
+          $destination = Join-Path (Resolve-Path release-assets) "Nova_${version}_x64-setup.exe"
           Copy-Item -LiteralPath $signedFiles[0].FullName -Destination $destination -Force
           $sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
           $publisher = $signature.SignerCertificate.Subject
 
           @"
-          Nebula AI v$version is a trusted Windows release signed through SignPath.
+          Nova v$version is a trusted Windows release signed through SignPath.
 
           - Authenticode status: Valid
           - Publisher certificate: $publisher
@@ -151,7 +151,7 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             "${{ steps.prepare-release.outputs.path }}" `
             --verify-tag `
-            --title "Nebula AI ${{ github.ref_name }}" `
+            --title "Nova ${{ github.ref_name }}" `
             --notes-file release-notes.md `
             --latest
 
@@ -180,12 +180,12 @@ jobs:
 
           $version = "${{ github.ref_name }}" -replace '^v', ''
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
-          $destination = Join-Path (Resolve-Path release-assets) "Nebula-AI_${version}_x64-setup-UNSIGNED.exe"
+          $destination = Join-Path (Resolve-Path release-assets) "Nova_${version}_x64-setup-UNSIGNED.exe"
           Copy-Item -LiteralPath $installers[0].FullName -Destination $destination -Force
           $sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
 
           @"
-          # Nebula AI $version — unsigned testing build
+          # Nova $version (unsigned testing build)
 
           **Warning:** This is an unsigned pre-release for direct testing. Windows
           SmartScreen may display an unknown-publisher warning. Do not redistribute
@@ -194,7 +194,7 @@ jobs:
           - Build source: GitHub Actions from tag ${{ github.ref_name }}
           - SHA-256: ``$sha256``
 
-          The stable v0.2.1 release remains blocked until SignPath returns a valid
+          The latest stable release remains blocked until SignPath returns a valid
           Authenticode signature.
           "@ | Set-Content -Path unsigned-release-notes.md -Encoding utf8
 
@@ -209,6 +209,6 @@ jobs:
           gh release create "${{ github.ref_name }}" `
             "${{ steps.prepare-unsigned-release.outputs.path }}" `
             --verify-tag `
-            --title "Nebula AI ${{ github.ref_name }} (Unsigned Test)" `
+            --title "Nova ${{ github.ref_name }} (Unsigned Test)" `
             --notes-file unsigned-release-notes.md `
             --prerelease
