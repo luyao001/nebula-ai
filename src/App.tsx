@@ -56,7 +56,7 @@ const ORCAROUTER_DEFAULT_MODELS = [
   "orcarouter/auto",
   "deepseek/deepseek-v4-pro",
   "deepseek/deepseek-v4-flash",
-  "qwen/qianwen-3.8",
+  "qwen/qwen3.8-max",
 ];
 
 const ollamaProvider = createOllamaProvider(OLLAMA_API_URL);
