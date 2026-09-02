@@ -1,4 +1,4 @@
-export type DiffLineKind = "same" | "add" | "del";
+export type DiffLineKind = "same" | "add" | "del" | "skip";
 
 export type DiffLine = {
   kind: DiffLineKind;
@@ -17,6 +17,7 @@ export type DiffResult = {
 
 const MAX_DIFF_LINES = 400;
 const MAX_LCS_CELLS = 250_000;
+const CONTEXT_LINES = 3;
 
 const buildLcsOps = (oldLines: string[], newLines: string[]): DiffLine[] => {
   const rows = oldLines.length + 1;
@@ -58,6 +59,54 @@ const buildLcsOps = (oldLines: string[], newLines: string[]): DiffLine[] => {
   return ops;
 };
 
+const contextualizeOps = (ops: DiffLine[]) => {
+  if (ops.length <= MAX_DIFF_LINES) return { lines: ops, collapsed: false };
+  const selected = new Set<number>();
+  ops.forEach((op, index) => {
+    if (op.kind === "same") return;
+    const start = Math.max(0, index - CONTEXT_LINES);
+    const end = Math.min(ops.length - 1, index + CONTEXT_LINES);
+    for (let cursor = start; cursor <= end; cursor += 1) selected.add(cursor);
+  });
+  if (!selected.size) {
+    return { lines: ops.slice(0, MAX_DIFF_LINES), collapsed: true };
+  }
+
+  const indices = [...selected].sort((left, right) => left - right);
+  const contextual: DiffLine[] = [];
+  let previous = -1;
+  for (const index of indices) {
+    if (index > previous + 1) {
+      contextual.push({
+        kind: "skip",
+        text: `… 省略 ${index - previous - 1} 行未改内容 …`,
+      });
+    }
+    contextual.push(ops[index]);
+    previous = index;
+  }
+  if (previous < ops.length - 1) {
+    contextual.push({
+      kind: "skip",
+      text: `… 省略 ${ops.length - previous - 1} 行未改内容 …`,
+    });
+  }
+  if (contextual.length <= MAX_DIFF_LINES) {
+    return { lines: contextual, collapsed: true };
+  }
+
+  const headSize = Math.floor((MAX_DIFF_LINES - 1) / 2);
+  const tailSize = MAX_DIFF_LINES - headSize - 1;
+  return {
+    lines: [
+      ...contextual.slice(0, headSize),
+      { kind: "skip" as const, text: "… 差异过大，中间部分已省略 …" },
+      ...contextual.slice(-tailSize),
+    ],
+    collapsed: true,
+  };
+};
+
 export const computeLineDiff = (oldText: string, newText: string): DiffResult => {
   const oldLines = oldText ? oldText.split("\n") : [];
   const newLines = newText ? newText.split("\n") : [];
@@ -75,11 +124,12 @@ export const computeLineDiff = (oldText: string, newText: string): DiffResult =>
     if (op.kind === "add") added += 1;
     else if (op.kind === "del") removed += 1;
   }
+  const display = contextualizeOps(ops);
   return {
-    lines: ops.slice(0, MAX_DIFF_LINES),
+    lines: display.lines,
     added,
     removed,
-    truncated: ops.length > MAX_DIFF_LINES,
+    truncated: display.collapsed,
     oversized,
   };
 };

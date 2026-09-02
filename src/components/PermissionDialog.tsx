@@ -44,7 +44,9 @@ function WriteFilePreview({ details }: { details: WriteFileDetails }) {
       <div className="nf-diff-lines">
         {visible.map((line, index) => (
           <div key={index} className={"nf-diff-line " + line.kind}>
-            <span aria-hidden="true">{line.kind === "add" ? "+" : line.kind === "del" ? "-" : " "}</span>
+            <span aria-hidden="true">
+              {line.kind === "add" ? "+" : line.kind === "del" ? "-" : line.kind === "skip" ? "⋯" : " "}
+            </span>
             <code>{line.text || " "}</code>
           </div>
         ))}

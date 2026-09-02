@@ -45,6 +45,17 @@ describe("computeLineDiff", () => {
     expect(result.oversized).toBe(false);
     expect(result.truncated).toBe(true);
     expect(result.added).toBe(300);
-    expect(result.lines.length).toBe(400);
+    expect(result.lines.length).toBeLessThanOrEqual(400);
+    expect(result.lines.some((line) => line.kind === "skip")).toBe(true);
+  });
+
+  it("shows a late change instead of spending the preview cap on unchanged lines", () => {
+    const oldLines = Array.from({ length: 700 }, (_, index) => `line-${index}`);
+    const newLines = [...oldLines];
+    newLines[650] = "late-change";
+    const result = computeLineDiff(oldLines.join("\n"), newLines.join("\n"));
+
+    expect(result.lines.some((line) => line.text === "late-change" && line.kind === "add")).toBe(true);
+    expect(result.lines.some((line) => line.kind === "skip")).toBe(true);
   });
 });

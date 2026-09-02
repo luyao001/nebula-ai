@@ -2,6 +2,7 @@ use super::GatewayRoots;
 use serde_json::{json, Value};
 use std::{
     env, fs,
+    io::Read,
     net::{IpAddr, ToSocketAddrs},
     path::{Component, Path, PathBuf},
 };
@@ -9,6 +10,27 @@ use url::Url;
 
 const MAX_TEXT_BYTES: usize = 1_048_576;
 const MAX_DIFF_PREVIEW_BYTES: usize = 256 * 1024;
+
+pub(super) fn file_fingerprint(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|_| "无法读取目标文件指纹。".to_string())?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    let mut total = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| "无法读取目标文件指纹。".to_string())?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        for byte in &buffer[..read] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    Ok(format!("{hash:016x}:{total}"))
+}
 
 pub(super) struct CheckedCall {
     pub arguments: Value,
@@ -120,6 +142,28 @@ fn validate_read(
     })
 }
 
+fn validate_search(arguments: Value, roots: &GatewayRoots) -> Result<CheckedCall, String> {
+    let selected_scope = scope(&arguments)?;
+    let relative = optional_string_arg(&arguments, "path")?.unwrap_or(".");
+    let query = string_arg(&arguments, "query")?.trim();
+    if !(2..=120).contains(&query.chars().count()) || query.contains('\n') || query.contains('\r') {
+        return Err("search_files 的搜索词长度必须为 2 到 120 个字符。".to_string());
+    }
+    let path = resolve_path(roots, selected_scope, relative, true)?;
+    if !path.is_dir() {
+        return Err("search_files 的 path 必须是目录。".to_string());
+    }
+    Ok(CheckedCall {
+        arguments: json!({ "path": path, "query": query, "scope": selected_scope }),
+        display: format!("在 {} 中搜索 `{}`", path.display(), query),
+        risk: "检索已授权目录中的文件名与文本内容".to_string(),
+        requires_confirmation: false,
+        can_allow_session: false,
+        grant_key: None,
+        details: None,
+    })
+}
+
 fn validate_write(arguments: Value, roots: &GatewayRoots) -> Result<CheckedCall, String> {
     let selected_scope = scope(&arguments)?;
     let relative = string_arg(&arguments, "path")?;
@@ -138,6 +182,11 @@ fn validate_write(arguments: Value, roots: &GatewayRoots) -> Result<CheckedCall,
         .ok_or_else(|| "目标文件缺少父目录。".to_string())?;
     let display = format!("写入 {}（{} 字节）", path.display(), content.len());
     let is_new_file = !path.exists();
+    let expected_fingerprint = if is_new_file {
+        None
+    } else {
+        Some(file_fingerprint(&path)?)
+    };
     let (old_content, old_omitted) = if is_new_file {
         (None, false)
     } else {
@@ -149,7 +198,12 @@ fn validate_write(arguments: Value, roots: &GatewayRoots) -> Result<CheckedCall,
         }
     };
     Ok(CheckedCall {
-        arguments: json!({ "path": path, "content": content, "scope": selected_scope }),
+        arguments: json!({
+            "path": path,
+            "content": content,
+            "scope": selected_scope,
+            "expectedFingerprint": expected_fingerprint,
+        }),
         display,
         risk: if is_new_file {
             "在已授权目录中创建文件".to_string()
@@ -263,7 +317,9 @@ fn whitelist_reason(program: &str, args: &[String]) -> String {
     let first = args.first().map(String::as_str).unwrap_or("");
     match name.as_str() {
         "cargo" | "cargo.exe" => {
-            format!("命中白名单：cargo {first} 只做编译检查、测试、格式化或元数据读取，不运行任意项目代码。")
+            format!(
+                "命中命令形状白名单：cargo {first}。Cargo 仍可能执行 build.rs、过程宏或测试代码；临时工作目录不等于操作系统沙盒。"
+            )
         }
         "node" | "node.exe" => "命中白名单：node --check 只做语法检查，不执行脚本。".to_string(),
         _ => "命中白名单：python -m py_compile 只做编译检查，不执行脚本。".to_string(),
@@ -358,7 +414,7 @@ fn validate_command(arguments: Value, roots: &GatewayRoots) -> Result<CheckedCal
             executable.display(),
             cwd.display()
         ),
-        risk: "在临时沙盒中启动受限本地进程".to_string(),
+        risk: "在临时工作目录中启动本地进程；获批命令仍拥有当前用户权限".to_string(),
         requires_confirmation: true,
         can_allow_session: false,
         grant_key: None,
@@ -466,6 +522,7 @@ pub(super) fn validate_and_describe(
 ) -> Result<CheckedCall, String> {
     match tool_name {
         "read_file" | "list_dir" => validate_read(tool_name, arguments, roots),
+        "search_files" => validate_search(arguments, roots),
         "write_file" => validate_write(arguments, roots),
         "run_command" => validate_command(arguments, roots),
         "fetch_url" => validate_fetch(arguments),

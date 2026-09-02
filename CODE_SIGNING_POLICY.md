@@ -1,21 +1,25 @@
 # Code signing policy
 
-Nebula AI publishes Windows installers built from the source code in the
-official [luyao001/nova](https://github.com/luyao001/nova)
-repository. Release artifacts submitted for signing must come from a tagged
-commit owned by this repository and must use the same product name and version
-as the tag.
+Nova publishes Windows and macOS desktop installers built from the source code
+in the official [luyao001/nova](https://github.com/luyao001/nova) repository.
+Release artifacts must come from a version tag owned by this repository, and
+the version in `package.json`, `src-tauri/tauri.conf.json`, and
+`src-tauri/Cargo.toml` must match the tag.
 
-Windows artifacts are built on GitHub-hosted Windows runners by
-`.github/workflows/build-windows.yml`. Tagged builds submit their uploaded
-unsigned artifact to the SignPath GitHub connector for origin verification,
-manual approval, and signing. Publication fails closed: no GitHub Release is
-created unless Windows validates the returned Authenticode signature.
+All desktop artifacts are built on GitHub-hosted runners by
+`.github/workflows/desktop.yml`. The workflow produces a Windows x64 NSIS
+installer and separate macOS DMGs for Apple Silicon and Intel Macs.
 
-Tags in the form `vX.Y.Z-test.N` may publish clearly labeled unsigned
-pre-releases for direct testing. Their installer filename and release notes
-contain an `UNSIGNED` warning, and they are never marked as the latest stable
-release.
+Stable Windows builds are submitted through the SignPath GitHub connector for
+origin verification, manual approval, and Authenticode signing. Publication
+fails closed: no stable GitHub Release is created unless Windows validates the
+returned signature. macOS builds currently use an ad-hoc app signature so they
+run on Apple Silicon, but they are not Apple-notarized and may require approval
+in macOS Privacy & Security on first launch.
+
+Tags in the form `vX.Y.Z-test.N` publish clearly labeled unsigned pre-releases
+for direct testing. Their Windows installer filename and release notes contain
+an `UNSIGNED` warning, and they are never marked as the latest stable release.
 
 Free code signing provided by [SignPath.io](https://about.signpath.io/),
 certificate by [SignPath Foundation](https://signpath.org/).
@@ -33,13 +37,17 @@ the signing approver.
 ## Artifact requirements
 
 - The source commit must have a version tag in the form `vX.Y.Z`.
-- Package metadata must identify the product as `Nebula AI` and use the tagged
+- Package metadata must identify the product as `Nova` and use the tagged
   version.
-- The Windows installer and application executable are the only first-party
-  binaries intended to receive the project signature.
+- Stable Windows NSIS installers are the first-party binaries intended to
+  receive the SignPath project signature.
+- macOS DMGs contain ad-hoc signed application bundles for `arm64` and `x64`.
+  They must not be described as Apple-notarized until Developer ID signing and
+  notarization are configured.
 - Signed artifacts must not be modified after signing.
-- The SHA-256 digest of each released installer is published in its GitHub
-  Release notes.
+- The SHA-256 digest of every released installer is published in
+  `SHA256SUMS.txt` on the GitHub Release.
+- Each tagged release artifact receives a GitHub build-provenance attestation.
 - Unsigned testing tags use `vX.Y.Z-test.N` and must not be represented as
   trusted production releases.
 
@@ -54,5 +62,5 @@ approves the project and are never embedded in release binaries.
 
 ## Privacy
 
-Nebula AI's data handling is documented in the project
+Nova's data handling is documented in the project
 [privacy policy](PRIVACY.md).

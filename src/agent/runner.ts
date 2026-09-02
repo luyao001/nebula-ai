@@ -128,6 +128,7 @@ export const runAgentTask = async ({
         "\n\nYou are running inside Nova Agent. First call report_plan with a concise plan. " +
         "Call update_plan after completing a meaningful plan stage so progress stays accurate. " +
         "Use tools when evidence or local changes are needed. Never claim a tool succeeded without its result. " +
+        "Call search_files before editing files you have not seen yet, so edits match the actual workspace. " +
         "Use safe relative paths. Before writing to the workspace, write the exact content to the temporary sandbox and validate it there. " +
         "Commands can only validate files already placed in the temporary sandbox. " +
         (webMode

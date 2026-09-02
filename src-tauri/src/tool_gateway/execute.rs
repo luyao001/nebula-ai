@@ -1,4 +1,4 @@
-use super::{GatewayRoots, ToolExecutionResult};
+use super::{policy::file_fingerprint, GatewayRoots, ToolExecutionResult};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use std::{
@@ -75,11 +75,148 @@ fn list_dir(arguments: &Value) -> Result<ToolExecutionResult, String> {
     ))
 }
 
+fn search_files(arguments: &Value, roots: &GatewayRoots) -> Result<ToolExecutionResult, String> {
+    const MAX_RESULTS: usize = 80;
+    const MAX_ENTRIES: usize = 1_600;
+    const MAX_FILE_BYTES: u64 = 256 * 1024;
+    const IGNORED: &[&str] = &[
+        ".git",
+        ".next",
+        ".nuxt",
+        ".venv",
+        "build",
+        "coverage",
+        "dist",
+        "node_modules",
+        "target",
+        "vendor",
+    ];
+
+    let base = path_arg(arguments, "path")?;
+    let query = value_string(arguments, "query")?;
+    let scope = value_string(arguments, "scope")?;
+    let scope_root = match scope {
+        "workspace" => &roots.workspace,
+        "sandbox" => &roots.sandbox,
+        _ => return Err("冻结的搜索 scope 无效。".to_string()),
+    };
+    let needle = query.to_lowercase();
+    let mut pending = vec![(base, 0_usize)];
+    let mut results = Vec::new();
+    let mut inspected_entries = 0_usize;
+    let mut inspected_files = 0_usize;
+    let mut truncated = false;
+
+    while let Some((directory, depth)) = pending.pop() {
+        if depth > 14 || inspected_entries >= MAX_ENTRIES || results.len() >= MAX_RESULTS {
+            truncated = true;
+            break;
+        }
+        let entries = match fs::read_dir(directory) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            inspected_entries += 1;
+            if inspected_entries > MAX_ENTRIES || results.len() >= MAX_RESULTS {
+                truncated = true;
+                break;
+            }
+            let file_type = match entry.file_type() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            if file_type.is_dir() {
+                if !IGNORED
+                    .iter()
+                    .any(|ignored| name.eq_ignore_ascii_case(ignored))
+                {
+                    pending.push((path, depth + 1));
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            inspected_files += 1;
+            let relative = path
+                .strip_prefix(scope_root)
+                .unwrap_or(&path)
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            if relative.to_lowercase().contains(&needle) {
+                results.push(json!({
+                    "path": relative,
+                    "line": null,
+                    "preview": "file path match",
+                    "kind": "path"
+                }));
+            }
+            if entry
+                .metadata()
+                .is_ok_and(|metadata| metadata.len() <= MAX_FILE_BYTES)
+            {
+                let Ok(content) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (line_index, line) in content.lines().enumerate() {
+                    if line.to_lowercase().contains(&needle) {
+                        results.push(json!({
+                            "path": relative,
+                            "line": line_index + 1,
+                            "preview": line.trim().chars().take(220).collect::<String>(),
+                            "kind": "content"
+                        }));
+                        if results.len() >= MAX_RESULTS {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let content =
+        serde_json::to_string_pretty(&results).map_err(|_| "搜索结果序列化失败。".to_string())?;
+    Ok(result(
+        content,
+        json!({
+            "count": results.len(),
+            "truncated": truncated,
+            "inspectedEntries": inspected_entries,
+            "inspectedFiles": inspected_files,
+            "query": query
+        }),
+    ))
+}
+
 fn write_file(arguments: &Value) -> Result<ToolExecutionResult, String> {
     let path = path_arg(arguments, "path")?;
     let content = value_string(arguments, "content")?;
     if content.len() > MAX_TEXT_BYTES {
         return Err("write_file 内容超过 1 MiB 限制。".to_string());
+    }
+    let expected_fingerprint = arguments.get("expectedFingerprint");
+    match expected_fingerprint {
+        Some(Value::Null) if path.exists() => {
+            return Err("目标原本不存在，但审批后已被创建；为避免覆盖，写入已取消。".to_string())
+        }
+        Some(Value::String(expected)) if !path.exists() => {
+            return Err("目标在审批后被删除；为避免写入过期路径，操作已取消。".to_string())
+        }
+        Some(Value::String(expected)) if file_fingerprint(&path)? != *expected => {
+            return Err("目标文件在审批后发生变化；请重新审查最新 diff。".to_string())
+        }
+        Some(Value::String(_)) | Some(Value::Null) => {}
+        _ => return Err("写入请求缺少审批时的文件指纹。".to_string()),
     }
     let mut options = fs::OpenOptions::new();
     options.create(true).write(true).truncate(true);
@@ -142,7 +279,19 @@ fn run_command(arguments: &Value, roots: &GatewayRoots) -> Result<ToolExecutionR
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear();
-    for key in ["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"] {
+    for key in [
+        "PATH",
+        "PATHEXT",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "HOME",
+        "USERPROFILE",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+    ] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
         }
@@ -273,6 +422,7 @@ pub(super) fn execute(
     match tool_name {
         "read_file" => read_file(arguments),
         "list_dir" => list_dir(arguments),
+        "search_files" => search_files(arguments, roots),
         "write_file" => write_file(arguments),
         "run_command" => run_command(arguments, roots),
         "fetch_url" => fetch_url(arguments),

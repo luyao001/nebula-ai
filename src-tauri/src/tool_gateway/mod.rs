@@ -48,6 +48,15 @@ impl Drop for ToolGatewayState {
     }
 }
 
+impl ToolGatewayState {
+    pub(crate) fn workspace_root(&self) -> Option<PathBuf> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|inner| inner.roots.as_ref().map(|roots| roots.workspace.clone()))
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceInfo {

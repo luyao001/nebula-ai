@@ -6,8 +6,13 @@ export type TaskArtifact = {
   content: string;
 };
 
+export type TaskMessage = {
+  role: "user" | "assistant" | "system";
+  content: string;
+};
+
 export type TaskSnapshot = {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   taskId: string;
   title: string;
   mode: "web" | "code" | "writing" | "assistant";
@@ -18,6 +23,8 @@ export type TaskSnapshot = {
   toolLog: AgentTimelineItem[];
   finalArtifact: TaskArtifact | null;
   usage: AgentUsage | null;
+  /** Present in v2 snapshots; older v1 snapshots still load without it. */
+  messages?: TaskMessage[];
   createdAt: number;
   updatedAt: number;
 };

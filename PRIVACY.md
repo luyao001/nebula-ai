@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-08-24
+Last updated: 2026-09-03
 
 Nova does not include analytics, advertising, user accounts, or background
 telemetry. It only contacts model services as described below and only in
@@ -43,9 +43,13 @@ Agent file tools are limited to a directory selected through the system folder
 picker and a per-session temporary sandbox. Paths are canonicalized by the Rust
 gateway before use. Workspace writes, external URL fetches, and every command
 require an explicit permission decision. Commands run without an interactive
-shell, with a cleared environment, a restricted executable/subcommand list,
-bounded output and timeout, and a working directory inside the temporary
-sandbox. Workspace file content must first be staged in that sandbox.
+shell, with a restricted executable/subcommand list, bounded output and timeout,
+and a working directory inside the temporary staging area. A minimal set of
+cross-platform toolchain environment variables is forwarded. This staging area
+is not an operating-system security sandbox: approved Cargo commands can still
+execute build scripts, procedural macros, or tests with the current user's
+permissions. The approval dialog states this risk. Workspace file content must
+first be staged in that area.
 
 The URL tool accepts public HTTP(S) text resources only. It rejects credentials,
 redirects, loopback, private, CGNAT, IPv4-mapped private, link-local, multicast,
@@ -59,19 +63,21 @@ new workspace session is initialized.
 
 Agent tasks store versioned JSON snapshots in Nova's application data
 directory. A snapshot contains a short task title derived from the beginning of
-the submitted Agent prompt, the execution plan, status, provider/model names,
-bounded and redacted tool timeline metadata, and an optional final artifact. It
-does not contain API keys, authorization headers, environment variables, raw
-conversation messages, or complete tool outputs. Snapshots are created only for
-tasks started in Agent mode and can be viewed from the task history panel.
+the submitted Agent prompt, up to 120 bounded conversation messages, the
+execution plan, status, provider/model names, bounded and redacted tool timeline
+metadata, and an optional complete or partial artifact. This allows a task to be
+reviewed and continued after the application restarts. It does not contain API
+keys, authorization headers, environment variables, or unbounded tool outputs.
+Snapshots are created only for tasks started in Agent mode and can be viewed
+from the task history panel.
 
 ## Files and retention
 
 Nova does not upload exported files. Files are written only to a location
-selected by the user through the system save dialog. Conversation and generated
-output are held in memory for the current session; only non-secret settings such
-as provider, mode, and model plus the explicitly described Agent task snapshots
-are stored locally.
+selected by the user through the system save dialog. Conversations from ordinary
+single-turn generation are held in memory for the current session. Only
+non-secret settings such as provider, mode, and model plus the explicitly
+described Agent task snapshots are stored locally.
 
 ## Uninstallation and deletion
 

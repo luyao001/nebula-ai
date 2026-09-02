@@ -81,6 +81,24 @@ export const AGENT_TOOLS: FunctionTool[] = [
   {
     type: "function",
     function: {
+      name: "search_files",
+      description:
+        "Search file paths and UTF-8 text inside the authorized workspace or sandbox. Prefer this over manually traversing many directories.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", minLength: 2, maxLength: 120 },
+          path: { type: "string", default: ".", description: "Safe relative directory to search." },
+          scope: { type: "string", enum: ["workspace", "sandbox"], default: "workspace" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
       description: "Write UTF-8 text inside the authorized workspace or sandbox. This requires user approval.",
       parameters: {

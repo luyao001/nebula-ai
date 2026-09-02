@@ -35,10 +35,14 @@ import { Group, Panel, Separator } from "react-resizable-panels";
 import { createOllamaProvider, createOpenAiCompatibleProvider } from "./providers";
 import type { ProviderMessage } from "./providers";
 import { runAgentTask } from "./agent/runner";
+import { resolveFileReferences } from "./agent/references";
 import type { AgentPlanStep, AgentState, AgentTimelineItem, AgentUsage } from "./agent/types";
 import { AgentTimeline } from "./components/AgentTimeline";
+import { GitReviewPanel } from "./components/GitReviewPanel";
 import { PermissionDialog } from "./components/PermissionDialog";
 import { TaskHistory } from "./components/TaskHistory";
+import { WorkspaceExplorer } from "./components/WorkspaceExplorer";
+import { readWorkspaceFile } from "./workspace/api";
 import {
   listTaskSnapshots,
   loadTaskSnapshot,
@@ -275,7 +279,7 @@ export default function App() {
     { role: "assistant", content: modeConfig.welcome },
   ]);
   const [generationStatus, setGenerationStatus] = useState<GenerationStatus>("idle");
-  const [activeTab, setActiveTab] = useState<"code" | "preview">("code");
+  const [activeTab, setActiveTab] = useState<"code" | "preview" | "workspace" | "review">("code");
   const [generatedCode, setGeneratedCode] = useState("");
   const [currentLanguage, setCurrentLanguage] = useState(() => modeConfig.language);
 
@@ -389,12 +393,11 @@ export default function App() {
   useEffect(() => {
     if (!currentTaskMeta) return;
     const timeoutId = window.setTimeout(() => {
-      const finalArtifact =
-        agentState === "completed" && generatedCode
-          ? { language: currentLanguage, content: generatedCode }
-          : null;
+      const finalArtifact = generatedCode
+        ? { language: currentLanguage, content: generatedCode }
+        : null;
       void saveTaskSnapshot({
-        schemaVersion: 1,
+        schemaVersion: 2,
         taskId: currentTaskMeta.taskId,
         title: currentTaskMeta.title,
         mode: workspaceMode,
@@ -408,6 +411,7 @@ export default function App() {
         })),
         finalArtifact,
         usage: agentUsage,
+        messages: messages.slice(-120),
         createdAt: currentTaskMeta.createdAt,
         updatedAt: Date.now(),
       })
@@ -427,6 +431,7 @@ export default function App() {
     currentLanguage,
     currentTaskMeta,
     generatedCode,
+    messages,
     provider,
     refreshTaskHistory,
     selectedModel,
@@ -623,6 +628,15 @@ export default function App() {
     }
   };
 
+  const handleReferenceFile = useCallback((path: string) => {
+    setPrompt((current) => {
+      const reference = `@${path}`;
+      if (current.includes(reference)) return current;
+      return current ? `${current.trimEnd()}\n${reference}` : `${reference} `;
+    });
+    window.setTimeout(() => composerRef.current?.focus(), 0);
+  }, []);
+
   const handleOpenTask = async (taskId: string) => {
     setTaskHistoryError("");
     try {
@@ -633,9 +647,32 @@ export default function App() {
       setProvider(snapshot.provider);
       if (snapshot.provider === "ollama") setCurrentModel(snapshot.model);
       else setOrcaRouterModel(snapshot.model);
-      setAgentState(snapshot.status);
+      const activeStates: AgentState[] = [
+        "planning",
+        "model_streaming",
+        "awaiting_permission",
+        "running_tool",
+        "observing",
+        "self_check",
+      ];
+      const restoredState = activeStates.includes(snapshot.status) ? "stopped" : snapshot.status;
+      setAgentState(restoredState);
       setAgentPlan(snapshot.plan);
-      setAgentTimeline(snapshot.toolLog);
+      setAgentTimeline(
+        activeStates.includes(snapshot.status)
+          ? [
+              ...snapshot.toolLog,
+              {
+                id: crypto.randomUUID(),
+                kind: "stopped",
+                title: "任务在上次退出时中断",
+                detail: "对话、计划、工具记录与部分成果已恢复；可重新发送最后一条指令继续。",
+                status: "error",
+                timestamp: Date.now(),
+              },
+            ]
+          : snapshot.toolLog,
+      );
       setAgentUsage(snapshot.usage ?? null);
       setCurrentTaskMeta({
         taskId: snapshot.taskId,
@@ -651,11 +688,20 @@ export default function App() {
         setCurrentLanguage(MODE_CONFIG[snapshot.mode].language);
         setActiveTab("code");
       }
-      setMessages([
-        { role: "assistant", content: MODE_CONFIG[snapshot.mode].welcome },
-        { role: "assistant", content: `已恢复任务快照：${snapshot.title}\n\n状态：${snapshot.status}` },
-      ]);
-      setGenerationStatus(snapshot.status === "completed" ? "done" : "idle");
+      setMessages(
+        snapshot.messages?.length
+          ? snapshot.messages
+          : [
+              { role: "assistant", content: MODE_CONFIG[snapshot.mode].welcome },
+              { role: "assistant", content: `已恢复任务快照：${snapshot.title}\n\n状态：${restoredState}` },
+            ],
+      );
+      lastAgentTaskRef.current = [...(snapshot.messages ?? [])]
+        .reverse()
+        .find((message) => message.role === "user")?.content ?? null;
+      setGenerationStatus(
+        restoredState === "completed" ? "done" : restoredState === "stopped" ? "stopped" : "idle",
+      );
     } catch (error) {
       setTaskHistoryError(error instanceof Error ? error.message : String(error));
     }
@@ -679,10 +725,21 @@ export default function App() {
     }
 
     const userMessage: ChatMessage = { role: "user", content: requested };
+    let taskContent = requested;
+    let attachedFiles: string[] = [];
+    if (workspaceInfo) {
+      try {
+        const resolved = await resolveFileReferences(requested, readWorkspaceFile);
+        taskContent = resolved.text;
+        attachedFiles = resolved.attached;
+      } catch {
+        // Reference expansion is best-effort; the task proceeds with the raw text.
+      }
+    }
     const requestMessages: ProviderMessage[] = [
       { role: "system", content: modeConfig.systemPrompt },
       ...messages.slice(1).filter((message) => message.content),
-      userMessage,
+      { role: "user", content: taskContent },
     ];
 
     setMessages((previous) => [
@@ -718,6 +775,18 @@ export default function App() {
       if (executionMode === "agent") {
         setAgentPlan([]);
         setAgentTimeline([]);
+        if (attachedFiles.length) {
+          setAgentTimeline([
+            {
+              id: crypto.randomUUID(),
+              kind: "plan",
+              title: `已附加 ${attachedFiles.length} 个工作区文件`,
+              detail: attachedFiles.map((path) => `@${path}`).join("\n"),
+              status: "success",
+              timestamp: Date.now(),
+            },
+          ]);
+        }
         setAgentState("planning");
         setAgentUsage(null);
         let currentTurn = "";
@@ -726,7 +795,7 @@ export default function App() {
           model: selectedModel,
           apiKey: provider === "orcarouter" ? orcaRouterApiKey : undefined,
           systemPrompt: modeConfig.systemPrompt,
-          task: userMessage.content,
+          task: taskContent,
           history: requestMessages.slice(1, -1),
           webMode: workspaceMode === "web",
           signal: controller.signal,
@@ -1237,6 +1306,24 @@ export default function App() {
                   >
                     <Eye size={13} /> <span>预览</span>
                   </button>
+                  <button
+                    className={activeTab === "workspace" ? "active" : ""}
+                    onClick={() => setActiveTab("workspace")}
+                    aria-pressed={activeTab === "workspace"}
+                    disabled={!workspaceInfo}
+                    title={workspaceInfo ? "浏览与搜索工作区文件" : "先授权一个工作目录"}
+                  >
+                    <FolderOpen size={13} /> <span>工作区</span>
+                  </button>
+                  <button
+                    className={activeTab === "review" ? "active" : ""}
+                    onClick={() => setActiveTab("review")}
+                    aria-pressed={activeTab === "review"}
+                    disabled={!workspaceInfo}
+                    title={workspaceInfo ? "审查工作区 Git 改动" : "先授权一个工作目录"}
+                  >
+                    <FolderGit2 size={13} /> <span>审查</span>
+                  </button>
                 </div>
                 <div className="nf-output-meta">
                   <span className="nf-language">{currentLanguage}</span>
@@ -1263,7 +1350,14 @@ export default function App() {
               </div>
             </div>
             <div className={"nf-frame-container " + (isLoading ? "is-forging" : "")}>
-              {!generatedCode ? (
+              {activeTab === "workspace" && workspaceInfo ? (
+                <WorkspaceExplorer
+                  workspacePath={workspaceInfo.workspacePath}
+                  onReference={handleReferenceFile}
+                />
+              ) : activeTab === "review" && workspaceInfo ? (
+                <GitReviewPanel workspacePath={workspaceInfo.workspacePath} />
+              ) : !generatedCode ? (
                 <div className="nf-artifact-empty">
                   <div className="nf-artifact-empty-mark"><Layers3 size={23} /></div>
                   <span>ARTIFACT WORKSPACE</span>

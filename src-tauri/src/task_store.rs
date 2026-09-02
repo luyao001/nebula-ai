@@ -6,6 +6,8 @@ const MAX_PLAN_STEPS: usize = 12;
 const MAX_TOOL_LOG_ITEMS: usize = 500;
 const MAX_ARTIFACT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_USAGE_TOKENS: u64 = 100_000_000;
+const MAX_MESSAGES: usize = 120;
+const MAX_CONVERSATION_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -24,6 +26,24 @@ pub struct TaskToolLogItem {
     detail: Option<String>,
     status: String,
     timestamp: u64,
+    #[serde(default)]
+    result: Option<String>,
+    #[serde(default)]
+    issues: Option<Vec<TaskPreviewIssue>>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskPreviewIssue {
+    severity: String,
+    message: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskMessage {
+    role: String,
+    content: String,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -55,6 +75,8 @@ pub struct TaskSnapshot {
     final_artifact: Option<TaskArtifact>,
     #[serde(default)]
     usage: Option<TaskUsage>,
+    #[serde(default)]
+    messages: Vec<TaskMessage>,
     created_at: u64,
     updated_at: u64,
 }
@@ -81,6 +103,10 @@ fn valid_task_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
+fn char_len(value: &str) -> usize {
+    value.chars().count()
+}
+
 fn tasks_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let directory = app
         .path()
@@ -92,23 +118,34 @@ fn tasks_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn validate_snapshot(snapshot: &TaskSnapshot) -> Result<(), String> {
-    if snapshot.schema_version != 1 || !valid_task_id(&snapshot.task_id) {
+    if !matches!(snapshot.schema_version, 1 | 2) || !valid_task_id(&snapshot.task_id) {
         return Err("任务快照版本或 ID 无效。".to_string());
     }
-    if snapshot.title.len() > 160
-        || snapshot.model.len() > 160
+    if char_len(&snapshot.title) > 160
+        || char_len(&snapshot.model) > 160
         || snapshot.plan.len() > MAX_PLAN_STEPS
         || snapshot.tool_log.len() > MAX_TOOL_LOG_ITEMS
     {
         return Err("任务快照字段超过限制。".to_string());
     }
-    if snapshot.plan.iter().any(|step| step.title.len() > 240)
+    if snapshot.plan.iter().any(|step| char_len(&step.title) > 240)
         || snapshot.tool_log.iter().any(|item| {
-            item.title.len() > 240
+            char_len(&item.title) > 240
                 || item
                     .detail
                     .as_ref()
-                    .is_some_and(|detail| detail.len() > 1000)
+                    .is_some_and(|detail| char_len(detail) > 1000)
+                || item
+                    .result
+                    .as_ref()
+                    .is_some_and(|result| char_len(result) > 4000)
+                || item.issues.as_ref().is_some_and(|issues| {
+                    issues.len() > 100
+                        || issues.iter().any(|issue| {
+                            !matches!(issue.severity.as_str(), "error" | "warning")
+                                || char_len(&issue.message) > 1000
+                        })
+                })
         })
     {
         return Err("任务计划或工具日志条目过长。".to_string());
@@ -124,6 +161,20 @@ fn validate_snapshot(snapshot: &TaskSnapshot) -> Result<(), String> {
         usage.input_tokens > MAX_USAGE_TOKENS || usage.output_tokens > MAX_USAGE_TOKENS
     }) {
         return Err("任务 token 用量数值超出限制。".to_string());
+    }
+    let conversation_bytes = snapshot
+        .messages
+        .iter()
+        .map(|message| message.role.len() + message.content.len())
+        .sum::<usize>();
+    if snapshot.messages.len() > MAX_MESSAGES
+        || conversation_bytes > MAX_CONVERSATION_BYTES
+        || snapshot
+            .messages
+            .iter()
+            .any(|message| !matches!(message.role.as_str(), "user" | "assistant" | "system"))
+    {
+        return Err("任务对话记录超过限制或包含无效角色。".to_string());
     }
     Ok(())
 }
@@ -219,6 +270,7 @@ mod tests {
             "plan": [],
             "toolLog": [],
             "finalArtifact": null,
+            "messages": [],
             "createdAt": 1,
             "updatedAt": 2
         })

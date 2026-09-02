@@ -1,5 +1,6 @@
 mod task_store;
 mod tool_gateway;
+mod workspace_inspector;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +17,10 @@ pub fn run() {
             task_store::save_task_snapshot,
             task_store::list_task_snapshots,
             task_store::load_task_snapshot,
+            workspace_inspector::list_workspace_entries,
+            workspace_inspector::read_workspace_file,
+            workspace_inspector::search_workspace,
+            workspace_inspector::workspace_git_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nova");
